@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
 const { Pool } = require('pg');
 const multer = require('multer');
 const xlsx = require('xlsx');
@@ -36,6 +35,7 @@ if (usePostgres) {
     });
 } else {
     console.log("Conectando ao banco de dados SQLite local...");
+    const sqlite3 = require('sqlite3').verbose();
     db = new sqlite3.Database(dbPath);
     // Ativa Modo Multitarefa (WAL) - Permite ler enquanto escreve (apenas SQLite)
     db.run('PRAGMA journal_mode = WAL');
