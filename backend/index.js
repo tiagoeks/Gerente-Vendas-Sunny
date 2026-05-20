@@ -359,7 +359,7 @@ app.get('/api/clientes', async (req, res) => {
         }
 
         const history = await query(`SELECT (cliente_id || ' - ' || nome_cliente) as unique_id, COUNT(DISTINCT num_docto) as t_ped, MIN(emissao) as start FROM vendas WHERE (status = '5' OR status = '6') AND almox = '20' GROUP BY cliente_id, nome_cliente`);
-        const hMap = Object.fromEntries(history.map(h => [h.unique_id, h]));
+        const hMap = Object.fromEntries(history.map(h => [h.unique_id, { ...h, t_ped: parseInt(h.t_ped) || 0 }]));
 
         let results = current.map(c => {
             const fatComp = compMap[c.unique_id] || 0;
@@ -391,12 +391,16 @@ app.get('/api/clientes', async (req, res) => {
             return {
                 id: c.cliente_id, unique_id: c.unique_id, cnpj: c.cnpj, cliente: c.nome_cliente, representante: c.representante, uf: c.uf,
                 perfil: perfilFinal, oportunidade, benchmark: mediaBenchmark,
-                faturamento: c.faturamento, fatComp, pedidos: c.pedidos, itens: c.itens_totais, variacao: variacao ? variacao.toFixed(1) : '0',
+                faturamento: parseFloat(c.faturamento) || 0,
+                fatComp: parseFloat(fatComp) || 0,
+                pedidos: parseInt(c.pedidos) || 0,
+                itens: parseFloat(c.itens_totais) || 0,
+                variacao: variacao ? variacao.toFixed(1) : '0',
                 frequencia: `${freq.toFixed(1)}/mês`, ciclo: cicloDias, ultimoPedidoDias: dRec,
                 status: category, 
                 score: finalScore, 
                 scoreLabel: finalScore >= 8 ? 'Excelente' : finalScore >= 6.5 ? 'Saudável' : finalScore >= 4 ? 'Atenção' : 'Crítico',
-                potencial: oportunidade // Oportunidade substitui o antigo potencial
+                potencial: oportunidade
             };
         });
 
@@ -445,43 +449,45 @@ app.get('/api/clientes/:id', async (req, res) => {
         console.log(`[Busca 360] Analisando indicadores para CNPJ: "${id}" | Filtro: ${dStart} a ${dEnd}`);
 
         const dateFilter = `AND emissao BETWEEN '${dStart}' AND '${dEnd}'`;
+        const dateFilterStrict = `AND emissao BETWEEN '${dStart}' AND '${dEnd}' AND (status = '5' OR status = '6') AND almox = '20'`;
 
         // Obter Perfil e UF do Cliente
         const clientInfo = await query(`
             SELECT v.uf, cp.perfil 
             FROM vendas v 
             LEFT JOIN clientes_perfil cp ON cp.cliente_id = v.cliente_id 
-            WHERE v.cnpj = ? LIMIT 1
+            WHERE v.cnpj = ? AND (v.status = '5' OR v.status = '6') AND v.almox = '20' LIMIT 1
         `, [id]);
         const clientUf = clientInfo[0]?.uf || 'SP';
         const clientPerfil = clientInfo[0]?.perfil || 'Rua';
 
-        // 1. Dados Vitalícios (Lifetime) - Ignora filtros
+        // 1. Dados Vitalícios (Lifetime) - Ignora filtros de data, mas respeita status
         const lifetime = await query(`
             SELECT 
                 SUM(valor_total) as total,
                 MIN(emissao) as primeira_compra,
                 COUNT(DISTINCT num_docto) as total_pedidos,
                 COUNT(DISTINCT produto_id) as skus_comprados
-            FROM vendas WHERE cnpj = ?
+            FROM vendas WHERE cnpj = ? AND (status = '5' OR status = '6') AND almox = '20'
         `, [id]);
 
         const activeSkusQuery = await query(`SELECT COUNT(cod_produto) as total FROM estoque WHERE saldo > 0`);
-        const totalActiveSkus = activeSkusQuery[0]?.total || 1;
-        const coberturaMix = ((lifetime[0]?.skus_comprados || 0) / totalActiveSkus) * 100;
+        const totalActiveSkus = parseInt(activeSkusQuery[0]?.total) || 1;
+        const skusComprados = parseInt(lifetime[0]?.skus_comprados) || 0;
+        const coberturaMix = (skusComprados / totalActiveSkus) * 100;
 
-        // 2. Faturamento no Período Selecionado
-        const totalPeriodo = await query(`SELECT SUM(valor_total) as total FROM vendas WHERE cnpj = ? ${dateFilter}`, [id]);
-        const fatTotal = totalPeriodo[0]?.total || 1;
+        // 2. Faturamento no Período Selecionado (apenas pedidos atendidos)
+        const totalPeriodo = await query(`SELECT SUM(valor_total) as total FROM vendas WHERE cnpj = ? ${dateFilterStrict}`, [id]);
+        const fatTotal = parseFloat(totalPeriodo[0]?.total) || 1;
 
         // 2.1 Benchmark UF + Perfil
         const benchmarkQuery = await query(`
-            SELECT SUM(v.valor_total) / COUNT(DISTINCT v.cliente_id) as media
+            SELECT SUM(v.valor_total) / NULLIF(COUNT(DISTINCT v.cliente_id), 0) as media
             FROM vendas v
             LEFT JOIN clientes_perfil cp ON cp.cliente_id = v.cliente_id
-            WHERE v.uf = ? AND COALESCE(cp.perfil, 'Rua') = ? ${dateFilter}
+            WHERE v.uf = ? AND COALESCE(cp.perfil, 'Rua') = ? ${dateFilterStrict.replace(/status/g, 'v.status').replace(/almox/g, 'v.almox').replace(/emissao/g, 'v.emissao')}
         `, [clientUf, clientPerfil]);
-        const benchmarkValor = benchmarkQuery[0]?.media || 0;
+        const benchmarkValor = parseFloat(benchmarkQuery[0]?.media) || 0;
 
         // 3. Histórico de Pedidos (Rápido com Índice)
         const pedidosBase = await query(`
@@ -498,6 +504,7 @@ app.get('/api/clientes/:id', async (req, res) => {
                 (SUM(v.valor_total) / NULLIF(SUM(v.quantidade), 0)) as preco_medio,
                 (SELECT COALESCE(v2.valor_unitario, v2.valor_total / NULLIF(v2.quantidade, 0), 0) FROM vendas v2 
                  WHERE v2.cnpj = v.cnpj AND v2.produto_id = v.produto_id 
+                 AND (v2.status = '5' OR v2.status = '6') AND v2.almox = '20'
                  ORDER BY emissao DESC LIMIT 1) as preco_ultima,
                 MAX(v.emissao) as ultima_data,
                 MIN(v.emissao) as primeira_data,
@@ -508,7 +515,7 @@ app.get('/api/clientes/:id', async (req, res) => {
                 MAX(e.sortimento) as sortimento, MAX(e.image_url) as image_url
             FROM vendas v
             LEFT JOIN estoque e ON v.produto_id = e.cod_produto
-            WHERE v.cnpj = ? ${dateFilter}
+            WHERE v.cnpj = ? AND (v.status = '5' OR v.status = '6') AND v.almox = '20' ${dateFilter}
             GROUP BY v.ean, v.descricao_produto, v.produto_id, COALESCE(e.marca, v.marca)
             ORDER BY total DESC
         `, [fatTotal, id]);
@@ -524,7 +531,7 @@ app.get('/api/clientes/:id', async (req, res) => {
                 MAX(e.image_url) as image_url
             FROM vendas v
             LEFT JOIN estoque e ON v.produto_id = e.cod_produto
-            WHERE e.saldo > 0 ${dateFilter.replace(/emissao/g, 'v.emissao')}
+            WHERE e.saldo > 0 AND (v.status = '5' OR v.status = '6') AND v.almox = '20' ${dateFilter.replace(/emissao/g, 'v.emissao')}
             GROUP BY v.produto_id, v.ean, v.descricao_produto, COALESCE(e.marca, v.marca)
             HAVING SUM(CASE WHEN v.cnpj = ? THEN 1 ELSE 0 END) = 0
             ORDER BY total_geral DESC LIMIT 50
@@ -537,11 +544,11 @@ app.get('/api/clientes/:id', async (req, res) => {
                 SELECT e.marca, SUM(v.valor_total) as total 
                 FROM vendas v
                 LEFT JOIN estoque e ON v.produto_id = e.cod_produto
-                WHERE v.cnpj = ? ${dateFilter}
+                WHERE v.cnpj = ? AND (v.status = '5' OR v.status = '6') AND v.almox = '20' ${dateFilter}
                 GROUP BY e.marca 
                 ORDER BY total DESC
             `, [id]),
-            query(`SELECT substr(emissao, 6, 2) as mes, SUM(CASE WHEN emissao LIKE '2026%' THEN valor_total ELSE 0 END) as atual, SUM(CASE WHEN emissao LIKE '2025%' THEN valor_total ELSE 0 END) as anterior FROM vendas WHERE cnpj = ? GROUP BY mes ORDER BY mes`, [id])
+            query(`SELECT substr(emissao, 6, 2) as mes, SUM(CASE WHEN emissao >= '${new Date().getFullYear()}-01-01' THEN valor_total ELSE 0 END) as atual, SUM(CASE WHEN emissao >= '${new Date().getFullYear() - 1}-01-01' AND emissao < '${new Date().getFullYear()}-01-01' THEN valor_total ELSE 0 END) as anterior FROM vendas WHERE cnpj = ? GROUP BY mes ORDER BY mes`, [id])
         ]);
 
         const pedidosFull = pedidosBase.map(p => {

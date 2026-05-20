@@ -145,15 +145,44 @@ const View360 = ({ client, onBack, globalFilters }) => {
     }, [client, localFilters.start, localFilters.end]);
 
     const handlePeriodChange = (p) => {
-        let s = '', e = '';
-        const now = new Date('2026-04-24');
-        if (p === 'Mês Atual') { s = '2026-04-01'; e = '2026-04-30'; }
-        else if (p === 'Últimos 30 Dias') { s = '2026-03-25'; e = '2026-04-24'; }
-        else if (p === 'Ano Atual') { s = '2026-01-01'; e = '2026-12-31'; }
-        else if (p === 'Últimos 6 Meses') { s = '2025-11-01'; e = '2026-04-30'; }
-        else if (p === 'Últimos 12 Meses') { s = '2025-05-01'; e = '2026-04-30'; }
-        else if (p === 'Personalizado') { s = localFilters.start; e = localFilters.end; }
-        setLocalFilters({ ...localFilters, periodo: p, start: s, end: e });
+        if (p === 'Personalizado') {
+            setLocalFilters(prev => ({ ...prev, periodo: p }));
+            return;
+        }
+        const today = new Date();
+        const y = today.getFullYear();
+        const m = today.getMonth();
+        const pad = (n) => String(n).padStart(2, '0');
+        const lastDayOfMonth = (yr, mo) => new Date(yr, mo + 1, 0).getDate();
+
+        let s, e;
+        if (p === 'Mês Atual') {
+            s = `${y}-${pad(m + 1)}-01`;
+            e = `${y}-${pad(m + 1)}-${pad(lastDayOfMonth(y, m))}`;
+        } else if (p === 'Mês Anterior') {
+            const prev = new Date(y, m - 1, 1);
+            s = `${prev.getFullYear()}-${pad(prev.getMonth() + 1)}-01`;
+            e = `${prev.getFullYear()}-${pad(prev.getMonth() + 1)}-${pad(lastDayOfMonth(prev.getFullYear(), prev.getMonth()))}`;
+        } else if (p === 'Últimos 30 Dias') {
+            const d30 = new Date(today); d30.setDate(d30.getDate() - 30);
+            s = `${d30.getFullYear()}-${pad(d30.getMonth() + 1)}-${pad(d30.getDate())}`;
+            e = `${y}-${pad(m + 1)}-${pad(today.getDate())}`;
+        } else if (p === 'Últimos 6 Meses') {
+            const d6 = new Date(y, m - 5, 1);
+            s = `${d6.getFullYear()}-${pad(d6.getMonth() + 1)}-01`;
+            e = `${y}-${pad(m + 1)}-${pad(lastDayOfMonth(y, m))}`;
+        } else if (p === 'Últimos 12 Meses') {
+            const d12 = new Date(y, m - 11, 1);
+            s = `${d12.getFullYear()}-${pad(d12.getMonth() + 1)}-01`;
+            e = `${y}-${pad(m + 1)}-${pad(lastDayOfMonth(y, m))}`;
+        } else if (p === 'Ano Atual') {
+            s = `${y}-01-01`;
+            e = `${y}-${pad(m + 1)}-${pad(lastDayOfMonth(y, m))}`;
+        } else {
+            const range = getDynamicDateRange(p);
+            s = range.start; e = range.end;
+        }
+        setLocalFilters(prev => ({ ...prev, periodo: p, start: s, end: e }));
     };
 
     const oppValue = (data?.marketGap || [])
@@ -174,11 +203,12 @@ const View360 = ({ client, onBack, globalFilters }) => {
     const SUNNY_COLORS = ['#003087', '#FFD700', '#0056D2', '#FFED80', '#001D54', '#85A5FF', '#ADC6FF'];
 
     const getSugestaoList = () => {
+        const baseDate = new Date();
         return (data.topProdutos || [])
             .filter(p => p.saldo > 0)
             .map(p => {
-                const diasUltimaCompra = p.ultima_data ? Math.floor((new Date('2026-04-24') - new Date(p.ultima_data)) / (1000*60*60*24)) : 0;
-                const diasDesdePrimeira = p.primeira_data ? Math.floor((new Date('2026-04-24') - new Date(p.primeira_data)) / (1000 * 60 * 60 * 24)) : 30;
+                const diasUltimaCompra = p.ultima_data ? Math.floor((baseDate - new Date(p.ultima_data)) / (1000*60*60*24)) : 0;
+                const diasDesdePrimeira = p.primeira_data ? Math.floor((baseDate - new Date(p.primeira_data)) / (1000 * 60 * 60 * 24)) : 30;
                 
                 let cicloSku = 30;
                 if (p.total_pedidos_sku > 1) {
