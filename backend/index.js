@@ -1256,7 +1256,7 @@ app.post('/api/import/clientes', upload.single('file'), async (req, res) => {
 const frontendDistPath = path.resolve(__dirname, '../frontend/dist');
 if (fs.existsSync(frontendDistPath)) {
     app.use(express.static(frontendDistPath));
-    app.get('*', (req, res, next) => {
+    app.get('(.*)', (req, res, next) => {
         if (req.path.startsWith('/api')) {
             return next();
         }
