@@ -783,6 +783,13 @@ app.get('/api/sync-portal-sunny', async (req, res) => {
             throw new Error(`Nenhum endpoint retornou dados válidos. Último erro: ${lastError?.message}`);
         }
         
+        // Log de debug do primeiro produto para verificar a estrutura de chaves
+        if (produtos.length > 0) {
+            console.log('[Portal Sync] Exemplo da estrutura do primeiro produto retornado pelo portal:');
+            console.log(JSON.stringify(produtos[0], null, 2));
+            console.log(`[Portal Sync] Total de produtos carregados na lista: ${produtos.length}`);
+        }
+        
         // Mapeamento flexível de colunas (igual ao import manual)
         const getVal = (obj, keys) => {
             const foundKey = Object.keys(obj).find(k => 
@@ -797,21 +804,22 @@ app.get('/api/sync-portal-sunny', async (req, res) => {
         
         for (const row of produtos) {
             try {
+                // Mapeia chaves Protheus b1_cod, etc. e chaves comuns
                 const cod = sanitize(
-                    getVal(row, ['cod_produto', 'codigo', 'code', 'produto_id', 'sku', 'codproduto', 'id'])
+                    getVal(row, ['b1_cod', 'cod_produto', 'codigo', 'code', 'produto_id', 'sku', 'codproduto', 'id'])
                 );
                 if (!cod) continue;
                 
-                const desc = String(getVal(row, ['descricao', 'description', 'nome', 'name', 'produto']) || '').trim();
-                const marca = String(getVal(row, ['marca', 'brand', 'fabricante']) || '').trim();
-                const saldo = parseMoney(getVal(row, ['saldo', 'disponivel', 'disponível', 'estoque', 'qtd', 'quantidade', 'stock']));
-                const pv = parseMoney(getVal(row, ['pv', 'preco_venda', 'price', 'valor', 'preco']));
-                const pdv = parseMoney(getVal(row, ['pdv', 'preco_sugerido', 'retail_price', 'preco_pdv']));
-                const previsao = String(getVal(row, ['previsao', 'previsão', 'arrival', 'chegada', 'data_previsao']) || '').trim();
-                const ean = sanitize(getVal(row, ['ean', 'barcode', 'barra', 'codigo_barras']));
-                const unidade = String(getVal(row, ['unidade', 'unit', 'un']) || '').trim();
+                const desc = String(getVal(row, ['b1_desc', 'descricao', 'description', 'nome', 'name', 'produto']) || '').trim();
+                const marca = String(getVal(row, ['bm_desc', 'marca', 'brand', 'fabricante']) || '').trim();
+                const saldo = parseMoney(getVal(row, ['disponivel', 'saldo', 'disponível', 'estoque', 'qtd', 'quantidade', 'stock']));
+                const pv = parseMoney(getVal(row, ['da1_prcven', 'pv', 'preco_venda', 'price', 'valor', 'preco']));
+                const pdv = parseMoney(getVal(row, ['da1_xprcsu', 'pdv', 'preco_sugerido', 'retail_price', 'preco_pdv']));
+                const previsao = String(getVal(row, ['b1_xprevis', 'b1_xdatche', 'previsao', 'previsão', 'arrival', 'chegada', 'data_previsao']) || '').trim();
+                const ean = sanitize(getVal(row, ['b1_codbar', 'ean', 'barcode', 'barra', 'codigo_barras']));
+                const unidade = String(getVal(row, ['b1_um', 'unidade', 'unit', 'un']) || '').trim();
                 const pack = String(getVal(row, ['pack', 'embalagem']) || '').trim();
-                const sortimento = String(getVal(row, ['sortimento', 'sort']) || '').trim();
+                const sortimento = String(getVal(row, ['b1_xsortim', 'sortimento', 'sort']) || '').trim();
                 const image_url = String(getVal(row, ['image_url', 'imagem', 'foto', 'image']) || '').trim();
                 
                 const descClean = toTitleCaseClean(desc);
