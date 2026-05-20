@@ -754,6 +754,27 @@ app.get('/api/sync-portal-sunny', async (req, res) => {
     try {
         console.log('[Portal Sync] Iniciando sincronização com portal Sunny...');
         
+        // Diagnóstico de colunas e triggers no PostgreSQL
+        if (usePostgres) {
+            try {
+                const cols = await query(`
+                    SELECT column_name, data_type 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'estoque'
+                `);
+                console.log('[Portal Sync Debug Schema] Colunas da tabela estoque:', JSON.stringify(cols, null, 2));
+                
+                const triggers = await query(`
+                    SELECT trigger_name, event_manipulation, action_statement 
+                    FROM information_schema.triggers 
+                    WHERE event_object_table = 'estoque'
+                `);
+                console.log('[Portal Sync Debug Schema] Triggers da tabela estoque:', JSON.stringify(triggers, null, 2));
+            } catch (schemaErr) {
+                console.log('[Portal Sync Debug Schema] Erro ao diagnosticar estrutura:', schemaErr.message);
+            }
+        }
+        
         // Tentar múltiplos endpoints possíveis para tabela de preço/estoque
         const endpointsParaTentar = [
             '/listaprodutos?take=10000',
