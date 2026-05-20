@@ -91,12 +91,89 @@ async function migrateTable(tableName, pgInsertQuery, conflictResolution = '', p
     console.log(`\n✅ Tabela ${tableName} migrada com sucesso! (${successCount} registros inseridos)`);
 }
 
+async function initPgDb(pgClient) {
+    console.log("🛠️ Inicializando tabelas no PostgreSQL se não existirem...");
+    await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS vendas (
+            id SERIAL PRIMARY KEY,
+            num_docto TEXT,
+            emissao TEXT,
+            mes TEXT,
+            uf TEXT,
+            status TEXT,
+            cliente_id TEXT,
+            loja TEXT,
+            nome_cliente TEXT,
+            cnpj TEXT,
+            pedido_cliente TEXT,
+            quantidade REAL,
+            valor_unitario REAL,
+            valor_total REAL,
+            almox TEXT,
+            produto_id TEXT,
+            descricao_produto TEXT,
+            vendedor_id TEXT,
+            nome_vendedor TEXT,
+            gerente_id TEXT,
+            marca TEXT,
+            ean TEXT
+        )
+    `);
+    await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS estoque (
+            id SERIAL PRIMARY KEY,
+            cod_produto TEXT UNIQUE,
+            descricao TEXT,
+            unidade TEXT,
+            marca TEXT,
+            saldo REAL,
+            pack TEXT,
+            sortimento TEXT,
+            pv REAL,
+            pdv REAL,
+            ean TEXT,
+            previsao TEXT,
+            image_url TEXT,
+            categoria TEXT
+        )
+    `);
+    await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS clientes_perfil (
+            cliente_id TEXT PRIMARY KEY,
+            nome_cliente TEXT,
+            perfil TEXT
+        )
+    `);
+    await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS marcas_mestre (
+            id SERIAL PRIMARY KEY,
+            nome TEXT UNIQUE
+        )
+    `);
+    await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS marcas_legado (
+            id SERIAL PRIMARY KEY,
+            marca TEXT,
+            produto_id TEXT
+        )
+    `);
+    
+    await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_cliente ON vendas(cliente_id)`);
+    await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_vendedor ON vendas(vendedor_id)`);
+    await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_status ON vendas(status)`);
+    await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_emissao ON vendas(emissao)`);
+    console.log("✅ Tabelas inicializadas no PostgreSQL.");
+}
+
 async function startMigration() {
     console.log("🚀 Iniciando migração de dados do SQLite para PostgreSQL...");
     
     const pgClient = await pgPool.connect();
     
     try {
+        // Garantir criação das tabelas antes da migração
+        await initPgDb(pgClient);
+
         // 1. Marcas Mestre
         await migrateTable(
             'marcas_mestre',
