@@ -1,0 +1,92 @@
+{
+  "sheetNames": [
+    "Base_Padrão (Sell_In)",
+    "Regras"
+  ],
+  "sheets": {
+    "Base_Padrão (Sell_In)": {
+      "headers": [
+        "Num. Docto.",
+        "Emissao",
+        "U.F.",
+        "STATUS",
+        "Cliente",
+        "Loja",
+        "Nome",
+        "C.N.P.J.",
+        "No do Pedido",
+        "Pedido Cliente",
+        "Data Emb.",
+        "Quantidade",
+        "Vlr.Unitario",
+        "Vlr.Total",
+        "Almox.",
+        "Produto",
+        "Descricao",
+        "Vendedor",
+        "Nome Vendedor",
+        "Status Vendedor",
+        "Gerente",
+        "Marca",
+        "EAN"
+      ],
+      "row1": [
+        "000061121",
+        46111,
+        "MG",
+        "",
+        "004412",
+        "002",
+        "FATIMA BORDADOS EIRELI",
+        "32.044.147/0001-70",
+        "",
+        "",
+        "",
+        2,
+        -111.74,
+        -223.48,
+        "80",
+        "001453",
+        "CTSD 3 - FIGURA DELUXE DRAGAO",
+        "000865",
+        "THOMAZ ANTONIO REPRESENTACAO LTDA",
+        "Inativo",
+        "000347"
+      ],
+      "row2": [
+        "000061636",
+        46086,
+        "MG",
+        "",
+        "001334",
+        "011",
+        "MJ COMERCIO DE BRINQUEDOS LTDA (WCA)",
+        "25.057.179/0001-44",
+        "",
+        "",
+        "",
+        1,
+        -59.35,
+        -59.35,
+        "80",
+        "001961",
+        "POKEMON - POKEBOLA COM LUZ E SOM",
+        "000820",
+        "BRENDATHA REPRESENTACOES LTDA",
+        "Ativo",
+        "000347"
+      ]
+    },
+    "Regras": {
+      "headers": [
+        "Regras:"
+      ],
+      "row1": [
+        "1. Solução para o Conflito de Status (Regra 3)"
+      ],
+      "row2": [
+        "Considerar somente STATUS (coluna D) : 5 e 6, onde indica que o pedido foi Faturado"
+      ]
+    }
+  }
+}

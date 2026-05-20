@@ -1,0 +1,30 @@
+# Dependências
+node_modules/
+
+# Builds do Frontend
+dist/
+dev-dist/
+dist-ssr/
+*.local
+
+# Bancos de Dados Locais (SQLite)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# Logs e Arquivos Temporários
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+.DS_Store
+
+# Uploads do Backend (vamos manter a pasta mas ignorar os arquivos enviados)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Variáveis de ambiente com senhas
+.env
+.env.local

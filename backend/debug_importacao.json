@@ -1,0 +1,14 @@
+{
+  "original_keys": [
+    "Código",
+    "URL"
+  ],
+  "normalized_keys": [
+    "codigo",
+    "url"
+  ],
+  "first_row": {
+    "Código": 1345,
+    "URL": "https://imagenssunnyecom.s3.sa-east-1.amazonaws.com/1345_01.jpg"
+  }
+}
