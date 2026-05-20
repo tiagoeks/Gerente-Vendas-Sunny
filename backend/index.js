@@ -873,8 +873,8 @@ app.get('/api/sync-portal-sunny', async (req, res) => {
                     await query(`UPDATE estoque SET 
                         saldo = ?,
                         previsao = CASE WHEN ? != '' THEN ? ELSE previsao END,
-                        pv = CASE WHEN ? > 0 THEN ? ELSE pv END,
-                        pdv = CASE WHEN ? > 0 THEN ? ELSE pdv END,
+                        pv = CASE WHEN CAST(? AS DOUBLE PRECISION) > 0 THEN CAST(? AS DOUBLE PRECISION) ELSE pv END,
+                        pdv = CASE WHEN CAST(? AS DOUBLE PRECISION) > 0 THEN CAST(? AS DOUBLE PRECISION) ELSE pdv END,
                         descricao = CASE WHEN ? != '' THEN ? ELSE descricao END,
                         marca = CASE WHEN ? != '' THEN ? ELSE marca END,
                         ean = CASE WHEN ? != '' THEN ? ELSE ean END,
