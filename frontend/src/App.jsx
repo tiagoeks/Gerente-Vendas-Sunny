@@ -1092,6 +1092,20 @@ const Importacao = ({ onStartTask, onFinishTask, activeTask }) => {
         }
     };
 
+    const [syncModal, setSyncModal] = React.useState({ open: false, loading: false, result: null });
+
+    const handleSyncPortal = async () => {
+        setSyncModal({ open: true, loading: true, result: null });
+        try {
+            const res = await fetch('/api/sync-portal-sunny');
+            const data = await res.json();
+            setSyncModal({ open: true, loading: false, result: data });
+        } catch (err) {
+            setSyncModal({ open: true, loading: false, result: { success: false, error: 'Erro de conexão com o servidor', detail: err.message } });
+        }
+    };
+
+
     const modules = [
         { id: 'estoque', label: 'Estoque Disponível', icon: '📦', desc: 'Saldos, PV/PDV e Previsões.' },
         { id: 'vendas', label: 'Vendas (ERP Protheus)', icon: '📊', desc: 'Histórico de faturamento e mix.' },
@@ -1102,6 +1116,89 @@ const Importacao = ({ onStartTask, onFinishTask, activeTask }) => {
 
     return (
         <div className="fade-in">
+            {/* Modal de Sincronização Portal Sunny */}
+            {syncModal.open && (
+                <div style={{
+                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)'
+                }}>
+                    <div style={{
+                        background: '#fff', borderRadius: '20px', padding: '40px', maxWidth: '480px', width: '90%',
+                        boxShadow: '0 25px 60px rgba(0,0,0,0.3)', textAlign: 'center', position: 'relative'
+                    }}>
+                        {syncModal.loading ? (
+                            <>
+                                <div style={{ fontSize: '3rem', marginBottom: '16px', animation: 'spin 1s linear infinite', display: 'inline-block' }}>🔄</div>
+                                <h3 style={{ color: '#003087', fontSize: '1.3rem', marginBottom: '8px' }}>Conectando ao Portal Sunny</h3>
+                                <p style={{ color: '#718096', fontSize: '0.9rem', marginBottom: '20px' }}>Autenticando e buscando dados de estoque...</p>
+                                <div style={{
+                                    height: '4px', background: '#E2E8F0', borderRadius: '2px', overflow: 'hidden'
+                                }}>
+                                    <div style={{
+                                        height: '100%', width: '60%', background: 'linear-gradient(90deg, #003087, #FFD700)',
+                                        borderRadius: '2px', animation: 'shimmer 1.5s ease-in-out infinite'
+                                    }}/>
+                                </div>
+                            </>
+                        ) : syncModal.result?.success ? (
+                            <>
+                                <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>✅</div>
+                                <h3 style={{ color: '#276749', fontSize: '1.3rem', marginBottom: '8px' }}>Sincronização Concluída!</h3>
+                                <div style={{
+                                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px',
+                                    margin: '20px 0', textAlign: 'left'
+                                }}>
+                                    <div style={{ background: '#EBF8FF', borderRadius: '12px', padding: '16px', borderLeft: '4px solid #3182CE' }}>
+                                        <div style={{ fontSize: '2rem', fontWeight: '800', color: '#2B6CB0' }}>{syncModal.result.atualizados}</div>
+                                        <div style={{ fontSize: '0.8rem', color: '#4A5568', marginTop: '4px' }}>Produtos Atualizados</div>
+                                    </div>
+                                    <div style={{ background: '#F0FFF4', borderRadius: '12px', padding: '16px', borderLeft: '4px solid #38A169' }}>
+                                        <div style={{ fontSize: '2rem', fontWeight: '800', color: '#276749' }}>{syncModal.result.inseridos}</div>
+                                        <div style={{ fontSize: '0.8rem', color: '#4A5568', marginTop: '4px' }}>Novos Inseridos</div>
+                                    </div>
+                                </div>
+                                {syncModal.result.erros > 0 && (
+                                    <div style={{ background: '#FFF5F5', borderRadius: '8px', padding: '10px', marginBottom: '12px', color: '#C53030', fontSize: '0.85rem' }}>
+                                        ⚠️ {syncModal.result.erros} registros com erro (ignorados)
+                                    </div>
+                                )}
+                                <p style={{ color: '#718096', fontSize: '0.8rem', marginBottom: '20px' }}>
+                                    Endpoint: <code style={{ background: '#EDF2F7', padding: '2px 6px', borderRadius: '4px' }}>{syncModal.result.endpoint}</code> • Total: {syncModal.result.total} registros
+                                </p>
+                                <button onClick={() => setSyncModal({ open: false, loading: false, result: null })} style={{
+                                    background: '#003087', color: '#fff', border: 'none', borderRadius: '10px',
+                                    padding: '12px 32px', fontSize: '1rem', cursor: 'pointer', fontWeight: '600'
+                                }}>Fechar</button>
+                            </>
+                        ) : (
+                            <>
+                                <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>❌</div>
+                                <h3 style={{ color: '#C53030', fontSize: '1.3rem', marginBottom: '8px' }}>Erro na Sincronização</h3>
+                                <div style={{ background: '#FFF5F5', borderRadius: '10px', padding: '16px', margin: '16px 0', textAlign: 'left' }}>
+                                    <p style={{ color: '#C53030', fontSize: '0.9rem', margin: 0, fontFamily: 'monospace' }}>
+                                        {syncModal.result?.error || 'Erro desconhecido'}
+                                    </p>
+                                    {syncModal.result?.detail && (
+                                        <p style={{ color: '#718096', fontSize: '0.8rem', margin: '8px 0 0 0' }}>{syncModal.result.detail}</p>
+                                    )}
+                                </div>
+                                <p style={{ color: '#718096', fontSize: '0.8rem', marginBottom: '20px' }}>Verifique as credenciais nas variáveis de ambiente do Railway</p>
+                                <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                                    <button onClick={handleSyncPortal} style={{
+                                        background: '#003087', color: '#fff', border: 'none', borderRadius: '10px',
+                                        padding: '12px 24px', fontSize: '0.9rem', cursor: 'pointer', fontWeight: '600'
+                                    }}>Tentar Novamente</button>
+                                    <button onClick={() => setSyncModal({ open: false, loading: false, result: null })} style={{
+                                        background: '#EDF2F7', color: '#4A5568', border: 'none', borderRadius: '10px',
+                                        padding: '12px 24px', fontSize: '0.9rem', cursor: 'pointer', fontWeight: '600'
+                                    }}>Fechar</button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
             <header style={{marginBottom:'32px'}}>
                 <h2 style={{color:'var(--sunny-blue)', fontSize:'2rem', marginBottom:'8px'}}>📥 Importação de Dados</h2>
                 <p style={{color:'var(--text-muted)'}}>Alimente a inteligência Sunny sem precisar parar seu trabalho.</p>
@@ -1110,6 +1207,7 @@ const Importacao = ({ onStartTask, onFinishTask, activeTask }) => {
             <div className="import-grid">
                 {modules.map(mod => {
                     const isRunning = activeTask?.name === mod.label;
+                    const isEstoque = mod.id === 'estoque';
                     return (
                         <div key={mod.id} className="import-card shadow-sm">
                             <div className="import-icon">{mod.icon}</div>
@@ -1128,6 +1226,32 @@ const Importacao = ({ onStartTask, onFinishTask, activeTask }) => {
                                     {isRunning ? '🚀 Processando...' : 'Clique para selecionar planilha'}
                                 </label>
                             </div>
+
+                            {/* Botão exclusivo do card de Estoque */}
+                            {isEstoque && (
+                                <button
+                                    id="btn-sync-portal-sunny"
+                                    onClick={handleSyncPortal}
+                                    disabled={syncModal.loading}
+                                    style={{
+                                        marginTop: '12px', width: '100%', padding: '11px 16px',
+                                        background: syncModal.loading
+                                            ? '#E2E8F0'
+                                            : 'linear-gradient(135deg, #003087 0%, #0056D2 100%)',
+                                        color: syncModal.loading ? '#A0AEC0' : '#fff',
+                                        border: '2px solid transparent',
+                                        borderRadius: '10px', fontSize: '0.85rem', fontWeight: '700',
+                                        cursor: syncModal.loading ? 'not-allowed' : 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                                        transition: 'all 0.2s ease', letterSpacing: '0.3px'
+                                    }}
+                                    onMouseEnter={e => { if (!syncModal.loading) { e.target.style.transform = 'translateY(-1px)'; e.target.style.boxShadow = '0 6px 20px rgba(0,48,135,0.4)'; }}}
+                                    onMouseLeave={e => { e.target.style.transform = ''; e.target.style.boxShadow = ''; }}
+                                >
+                                    <span style={{ fontSize: '1rem' }}>{syncModal.loading ? '🔄' : '🌐'}</span>
+                                    {syncModal.loading ? 'Sincronizando...' : 'Sincronizar via Portal Sunny'}
+                                </button>
+                            )}
 
                             {isRunning && (
                                 <div className="progress-container">

@@ -378,6 +378,12 @@ body { margin: 0; background-color: var(--bg-app); color: var(--text-main); heig
     to { transform: rotate(360deg); }
 }
 
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    50% { transform: translateX(0%); }
+    100% { transform: translateX(200%); }
+}
+
 .btn-sec-small {
     background: #F1F5F9;
     border: none;

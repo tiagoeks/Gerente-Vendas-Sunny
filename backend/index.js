@@ -674,6 +674,190 @@ app.post('/api/import/estoque', upload.single('file'), async (req, res) => {
     }
 });
 
+// --- SINCRONIZAÇÃO VIA PORTAL SUNNY ---
+// Credenciais armazenadas em variáveis de ambiente (segurança)
+const PORTAL_BASE_URL = process.env.SUNNY_PORTAL_URL || 'https://site-sunny.com.br/rest2';
+const PORTAL_USER = process.env.SUNNY_PORTAL_USER || 'trocha';
+const PORTAL_PASS = process.env.SUNNY_PORTAL_PASS || '123';
+
+async function fetchPortalSunny(endpoint) {
+    const https = require('https');
+    const basicAuth = 'BASIC ' + Buffer.from(`${PORTAL_USER}:${PORTAL_PASS}`).toString('base64');
+    const url = `${PORTAL_BASE_URL}${endpoint}`;
+    
+    return new Promise((resolve, reject) => {
+        const options = {
+            method: 'GET',
+            headers: {
+                'Authorization': basicAuth,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            rejectUnauthorized: false // aceita certificados auto-assinados
+        };
+        
+        const req = https.get(url, options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    if (res.statusCode === 401) reject(new Error('Credenciais inválidas (401)'));
+                    else if (res.statusCode === 404) reject(new Error(`Endpoint não encontrado: ${endpoint}`));
+                    else if (res.statusCode >= 400) reject(new Error(`Erro HTTP ${res.statusCode}`));
+                    else resolve({ status: res.statusCode, data: JSON.parse(data) });
+                } catch (e) {
+                    reject(new Error(`Resposta inválida do portal: ${data.substring(0, 200)}`));
+                }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(30000, () => { req.destroy(); reject(new Error('Timeout ao conectar ao portal Sunny')); });
+    });
+}
+
+app.get('/api/sync-portal-sunny', async (req, res) => {
+    try {
+        console.log('[Portal Sync] Iniciando sincronização com portal Sunny...');
+        
+        // Tentar múltiplos endpoints possíveis para tabela de preço/estoque
+        const endpointsParaTentar = [
+            '/produtos',
+            '/estoque',
+            '/tabelapreco',
+            '/catalogo',
+            '/products',
+            '/itens',
+            '/sunny/produtos',
+        ];
+        
+        let produtos = null;
+        let endpointUsado = null;
+        let lastError = null;
+        
+        for (const ep of endpointsParaTentar) {
+            try {
+                console.log(`[Portal Sync] Tentando endpoint: ${ep}`);
+                const result = await fetchPortalSunny(ep);
+                const data = result.data;
+                // Aceitar arrays ou objetos com array dentro
+                const arr = Array.isArray(data) ? data : (data?.data || data?.items || data?.produtos || data?.produtos_list || null);
+                if (arr && arr.length > 0) {
+                    produtos = arr;
+                    endpointUsado = ep;
+                    console.log(`[Portal Sync] ✅ Endpoint ${ep} retornou ${arr.length} produtos`);
+                    break;
+                }
+            } catch (e) {
+                lastError = e;
+                console.log(`[Portal Sync] Endpoint ${ep} falhou: ${e.message}`);
+            }
+        }
+        
+        if (!produtos) {
+            throw new Error(`Nenhum endpoint retornou dados válidos. Último erro: ${lastError?.message}`);
+        }
+        
+        // Mapeamento flexível de colunas (igual ao import manual)
+        const getVal = (obj, keys) => {
+            const foundKey = Object.keys(obj).find(k => 
+                keys.some(t => k.toLowerCase().trim().replace(/[_\s]/g, '').includes(t.toLowerCase().replace(/[_\s]/g, '')))
+            );
+            return foundKey ? obj[foundKey] : null;
+        };
+        
+        let atualizados = 0;
+        let inseridos = 0;
+        let erros = 0;
+        
+        for (const row of produtos) {
+            try {
+                const cod = sanitize(
+                    getVal(row, ['cod_produto', 'codigo', 'code', 'produto_id', 'sku', 'codproduto', 'id'])
+                );
+                if (!cod) continue;
+                
+                const desc = String(getVal(row, ['descricao', 'description', 'nome', 'name', 'produto']) || '').trim();
+                const marca = String(getVal(row, ['marca', 'brand', 'fabricante']) || '').trim();
+                const saldo = parseMoney(getVal(row, ['saldo', 'disponivel', 'disponível', 'estoque', 'qtd', 'quantidade', 'stock']));
+                const pv = parseMoney(getVal(row, ['pv', 'preco_venda', 'price', 'valor', 'preco']));
+                const pdv = parseMoney(getVal(row, ['pdv', 'preco_sugerido', 'retail_price', 'preco_pdv']));
+                const previsao = String(getVal(row, ['previsao', 'previsão', 'arrival', 'chegada', 'data_previsao']) || '').trim();
+                const ean = sanitize(getVal(row, ['ean', 'barcode', 'barra', 'codigo_barras']));
+                const unidade = String(getVal(row, ['unidade', 'unit', 'un']) || '').trim();
+                const pack = String(getVal(row, ['pack', 'embalagem']) || '').trim();
+                const sortimento = String(getVal(row, ['sortimento', 'sort']) || '').trim();
+                const image_url = String(getVal(row, ['image_url', 'imagem', 'foto', 'image']) || '').trim();
+                
+                const descClean = toTitleCaseClean(desc);
+                const marcaClean = toTitleCaseClean(marca);
+                
+                const existing = await query('SELECT cod_produto FROM estoque WHERE cod_produto = ?', [cod]);
+                
+                if (existing.length > 0) {
+                    // UPDATE: atualiza saldo e previsão (campos principais) + outros se disponíveis
+                    await query(`UPDATE estoque SET 
+                        saldo = ?,
+                        previsao = CASE WHEN ? != '' THEN ? ELSE previsao END,
+                        pv = CASE WHEN ? > 0 THEN ? ELSE pv END,
+                        pdv = CASE WHEN ? > 0 THEN ? ELSE pdv END,
+                        descricao = CASE WHEN ? != '' THEN ? ELSE descricao END,
+                        marca = CASE WHEN ? != '' THEN ? ELSE marca END,
+                        ean = CASE WHEN ? != '' THEN ? ELSE ean END,
+                        image_url = CASE WHEN ? != '' THEN ? ELSE image_url END
+                        WHERE cod_produto = ?`,
+                        [saldo,
+                         previsao, previsao,
+                         pv, pv,
+                         pdv, pdv,
+                         descClean, descClean,
+                         marcaClean, marcaClean,
+                         ean, ean,
+                         image_url, image_url,
+                         cod]);
+                    atualizados++;
+                } else {
+                    // INSERT: novo produto descoberto
+                    await query(`INSERT INTO estoque (cod_produto, descricao, unidade, marca, saldo, pack, sortimento, pv, pdv, ean, previsao, image_url)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [cod, descClean, unidade, marcaClean, saldo, pack, sortimento, pv, pdv, ean, previsao, image_url]);
+                    inseridos++;
+                    
+                    // Registrar marca nova
+                    if (marcaClean) {
+                        const insertMarcaQuery = usePostgres 
+                            ? 'INSERT INTO marcas_mestre (nome) VALUES (?) ON CONFLICT (nome) DO NOTHING'
+                            : 'INSERT OR IGNORE INTO marcas_mestre (nome) VALUES (?)';
+                        await query(insertMarcaQuery, [marcaClean]);
+                    }
+                }
+            } catch (rowErr) {
+                erros++;
+                console.error(`[Portal Sync] Erro na linha:`, rowErr.message);
+            }
+        }
+        
+        console.log(`[Portal Sync] ✅ Concluído: ${atualizados} atualizados, ${inseridos} inseridos, ${erros} erros`);
+        res.json({
+            success: true,
+            endpoint: endpointUsado,
+            total: produtos.length,
+            atualizados,
+            inseridos,
+            erros,
+            message: `Sincronização concluída via ${endpointUsado}`,
+            detail: `${atualizados} produtos atualizados | ${inseridos} novos produtos inseridos${erros > 0 ? ` | ${erros} erros` : ''}`
+        });
+        
+    } catch (err) {
+        console.error('[Portal Sync] Erro fatal:', err.message);
+        res.status(500).json({ 
+            success: false,
+            error: err.message,
+            detail: 'Verifique as credenciais e disponibilidade do portal Sunny'
+        });
+    }
+});
+
 // --- IMPORTAÇÃO: GALERIA DE FOTOS (URL por SKU) ---
 app.post('/api/import/galeria', upload.single('file'), async (req, res) => {
     try {
