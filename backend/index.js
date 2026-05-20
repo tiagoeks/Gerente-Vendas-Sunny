@@ -310,18 +310,18 @@ app.get('/api/clientes', async (req, res) => {
                 (v.cliente_id || ' - ' || v.nome_cliente) as unique_id,
                 v.cliente_id, 
                 v.nome_cliente, 
-                v.nome_vendedor as representante, 
-                v.uf,
-                cp.perfil,
+                MAX(v.nome_vendedor) as representante, 
+                MAX(v.uf) as uf,
+                MAX(cp.perfil) as perfil,
                 SUM(v.valor_total) as faturamento, 
                 COUNT(DISTINCT v.num_docto) as pedidos, 
                 SUM(v.quantidade) as itens_totais, 
                 MAX(v.emissao) as ultima_compra, 
-                v.cnpj 
+                MAX(v.cnpj) as cnpj
             FROM vendas v
             LEFT JOIN clientes_perfil cp ON cp.cliente_id = v.cliente_id
             WHERE ${where} ${perfilFilter}
-            GROUP BY v.cliente_id, v.nome_cliente, cp.perfil
+            GROUP BY v.cliente_id, v.nome_cliente
         `, params);
 
         const mediasRows = await query(`
@@ -495,7 +495,7 @@ app.get('/api/clientes/:id', async (req, res) => {
             SELECT 
                 v.ean, v.descricao_produto as nome, COALESCE(e.marca, v.marca) as marca, v.produto_id,
                 SUM(v.quantidade) as qtd, SUM(v.valor_total) as total,
-                (SUM(v.valor_total) / SUM(v.quantidade)) as preco_medio,
+                (SUM(v.valor_total) / NULLIF(SUM(v.quantidade), 0)) as preco_medio,
                 (SELECT COALESCE(v2.valor_unitario, v2.valor_total / NULLIF(v2.quantidade, 0), 0) FROM vendas v2 
                  WHERE v2.cnpj = v.cnpj AND v2.produto_id = v.produto_id 
                  ORDER BY emissao DESC LIMIT 1) as preco_ultima,
@@ -503,11 +503,13 @@ app.get('/api/clientes/:id', async (req, res) => {
                 MIN(v.emissao) as primeira_data,
                 COUNT(DISTINCT v.num_docto) as total_pedidos_sku,
                 ((SUM(v.valor_total) * 100.0) / ?) as participacao,
-                e.saldo, e.pv, e.pdv, e.previsao, e.pack, e.sortimento, e.image_url
+                MAX(e.saldo) as saldo, MAX(e.pv) as pv, MAX(e.pdv) as pdv,
+                MAX(e.previsao) as previsao, MAX(e.pack) as pack,
+                MAX(e.sortimento) as sortimento, MAX(e.image_url) as image_url
             FROM vendas v
             LEFT JOIN estoque e ON v.produto_id = e.cod_produto
             WHERE v.cnpj = ? ${dateFilter}
-            GROUP BY v.ean, v.descricao_produto, v.produto_id, e.marca
+            GROUP BY v.ean, v.descricao_produto, v.produto_id, COALESCE(e.marca, v.marca)
             ORDER BY total DESC
         `, [fatTotal, id]);
 
@@ -516,13 +518,14 @@ app.get('/api/clientes/:id', async (req, res) => {
             SELECT 
                 v.produto_id, v.ean, v.descricao_produto as nome, COALESCE(e.marca, v.marca) as marca, 
                 SUM(v.valor_total) as total_geral,
-                e.saldo, e.pv, e.pdv, e.previsao, e.pack, e.sortimento,
+                MAX(e.saldo) as saldo, MAX(e.pv) as pv, MAX(e.pdv) as pdv,
+                MAX(e.previsao) as previsao, MAX(e.pack) as pack, MAX(e.sortimento) as sortimento,
                 RANK() OVER (ORDER BY SUM(v.valor_total) DESC) as rank_nacional,
-                e.image_url
+                MAX(e.image_url) as image_url
             FROM vendas v
             LEFT JOIN estoque e ON v.produto_id = e.cod_produto
             WHERE e.saldo > 0 ${dateFilter.replace(/emissao/g, 'v.emissao')}
-            GROUP BY v.produto_id, v.ean, v.descricao_produto, e.marca
+            GROUP BY v.produto_id, v.ean, v.descricao_produto, COALESCE(e.marca, v.marca)
             HAVING SUM(CASE WHEN v.cnpj = ? THEN 1 ELSE 0 END) = 0
             ORDER BY total_geral DESC LIMIT 50
         `, [id]);
