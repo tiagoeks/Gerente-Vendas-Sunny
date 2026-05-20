@@ -491,9 +491,9 @@ app.get('/api/clientes/:id', async (req, res) => {
 
         // 3. Histórico de Pedidos (Rápido com Índice)
         const pedidosBase = await query(`
-            SELECT num_docto, emissao, SUM(valor_total) as total, COUNT(DISTINCT descricao_produto) as skus, SUM(quantidade) as qtd_total, MAX(status) as status_id
-            FROM vendas WHERE cnpj = ? 
-            GROUP BY num_docto ORDER BY emissao DESC
+            SELECT num_docto, MAX(emissao) as emissao, SUM(valor_total) as total, COUNT(DISTINCT descricao_produto) as skus, SUM(quantidade) as qtd_total, MAX(status) as status_id
+            FROM vendas WHERE cnpj = ? AND (status = '5' OR status = '6') AND almox = '20'
+            GROUP BY num_docto ORDER BY MAX(emissao) DESC
         `, [id]);
 
         // 4. Mix Completo (RESPEITA FILTRO)
@@ -548,7 +548,18 @@ app.get('/api/clientes/:id', async (req, res) => {
                 GROUP BY e.marca 
                 ORDER BY total DESC
             `, [id]),
-            query(`SELECT substr(emissao, 6, 2) as mes, SUM(CASE WHEN emissao >= '${new Date().getFullYear()}-01-01' THEN valor_total ELSE 0 END) as atual, SUM(CASE WHEN emissao >= '${new Date().getFullYear() - 1}-01-01' AND emissao < '${new Date().getFullYear()}-01-01' THEN valor_total ELSE 0 END) as anterior FROM vendas WHERE cnpj = ? GROUP BY mes ORDER BY mes`, [id])
+            query(`
+                SELECT mes, SUM(atual) as atual, SUM(anterior) as anterior
+                FROM (
+                    SELECT 
+                        LPAD(EXTRACT(MONTH FROM emissao::date)::text, 2, '0') as mes,
+                        CASE WHEN emissao >= '${new Date().getFullYear()}-01-01' THEN valor_total ELSE 0 END as atual,
+                        CASE WHEN emissao >= '${new Date().getFullYear() - 1}-01-01' AND emissao < '${new Date().getFullYear()}-01-01' THEN valor_total ELSE 0 END as anterior
+                    FROM vendas 
+                    WHERE cnpj = ? AND (status = '5' OR status = '6') AND almox = '20'
+                ) t
+                GROUP BY mes ORDER BY mes
+            `, [id])
         ]);
 
         const pedidosFull = pedidosBase.map(p => {
