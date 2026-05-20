@@ -190,19 +190,43 @@ const excelDate = (val) => {
     return String(val).trim();
 };
 
-const BASE_DATE = "2026-04-22";
+const BASE_DATE = new Date().toISOString().split('T')[0];
 const FIXED_WHERE = "(status = '5' OR status = '6') AND almox = '20'";
 const CLIENT_KEY = "cliente_id || ' - ' || nome_cliente";
+
+const getDefaultDates = (start, end) => {
+    if (start && end) return { dStart: start, dEnd: end };
+    
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth(); // 0-indexed
+    const pad = (n) => String(n).padStart(2, '0');
+    
+    const dStart = start || `${y}-${pad(m + 1)}-01`;
+    const dEnd = end || `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`;
+    return { dStart, dEnd };
+};
 
 function getWhereAndParams(filters) {
     const { periodo, gerente, representante, cliente } = filters;
     let whereClause = `WHERE ${FIXED_WHERE}`; 
     let params = [];
 
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth(); // 0-indexed
+    const pad = (n) => String(n).padStart(2, '0');
+
     if (periodo === 'Mês Atual') {
-        whereClause += " AND emissao >= '2026-04-01'";
-    } else if (periodo === 'Último Mês') {
-        whereClause += " AND emissao BETWEEN '2026-03-01' AND '2026-03-31'";
+        const startOfMonth = `${y}-${pad(m + 1)}-01`;
+        whereClause += ` AND emissao >= '${startOfMonth}'`;
+    } else if (periodo === 'Último Mês' || periodo === 'Mês Anterior') {
+        const prevMonthDate = new Date(y, m - 1, 1);
+        const prevY = prevMonthDate.getFullYear();
+        const prevM = prevMonthDate.getMonth();
+        const startOfPrevMonth = `${prevY}-${pad(prevM + 1)}-01`;
+        const endOfPrevMonth = `${prevY}-${pad(prevM + 1)}-${pad(new Date(prevY, prevM + 1, 0).getDate())}`;
+        whereClause += ` AND emissao BETWEEN '${startOfPrevMonth}' AND '${endOfPrevMonth}'`;
     }
 
     if (gerente && gerente !== 'Todos') { whereClause += " AND gerente_id = ?"; params.push(gerente); }
@@ -216,7 +240,8 @@ function getWhereAndParams(filters) {
 app.get('/api/meta/filtros', async (req, res) => {
     try {
         const { gerente, start, end } = req.query;
-        let vWhere = `emissao BETWEEN '${start || '2026-04-01'}' AND '${end || '2026-04-30'}'`;
+        const { dStart, dEnd } = getDefaultDates(start, end);
+        let vWhere = `emissao BETWEEN '${dStart}' AND '${dEnd}'`;
         
         if (gerente && gerente !== 'Todos') {
             vWhere += ` AND gerente_id = ?`;
@@ -246,12 +271,11 @@ app.get('/api/clientes', async (req, res) => {
         const { search, uf, vendedor, status, gerente, start, end, compare } = req.query;
         const baseDate = new Date(BASE_DATE);
         
-        const dStart = start || '2026-04-01';
-        const dEnd = end || '2026-04-30';
+        const { dStart, dEnd } = getDefaultDates(start, end);
 
         // Determinar Datas de Comparação (YoY)
-        const compStart = dStart.replace('2026', '2025');
-        const compEnd = dEnd.replace('2026', '2025');
+        const compStart = dStart.replace(/^(\d{4})/, (match, p1) => String(parseInt(p1) - 1));
+        const compEnd = dEnd.replace(/^(\d{4})/, (match, p1) => String(parseInt(p1) - 1));
 
         // Build WHERE using v. prefix directly — safe, no fragile .replace()
         let where = `v.emissao BETWEEN ? AND ? AND (v.status = '5' OR v.status = '6') AND v.almox = '20'`;
@@ -377,7 +401,8 @@ app.get('/api/clientes', async (req, res) => {
         });
 
         if (status && status !== 'Todos') {
-            results = results.filter(r => r.scoreLabel.toLowerCase() === status.toLowerCase());
+            const mappedStatus = status.toLowerCase() === 'alerta' ? 'atenção' : status.toLowerCase();
+            results = results.filter(r => r.scoreLabel.toLowerCase() === mappedStatus);
         }
 
         // Cálculo de KPIs Agregados (Dinâmico conforme filtros)
@@ -415,10 +440,11 @@ app.get('/api/clientes/:id', async (req, res) => {
     try {
         const { id } = req.params; // CNPJ
         const { start, end } = req.query;
+        const { dStart, dEnd } = getDefaultDates(start, end);
         
-        console.log(`[Busca 360] Analisando indicadores para CNPJ: "${id}" | Filtro: ${start} a ${end}`);
+        console.log(`[Busca 360] Analisando indicadores para CNPJ: "${id}" | Filtro: ${dStart} a ${dEnd}`);
 
-        const dateFilter = (start && end) ? `AND emissao BETWEEN '${start}' AND '${end}'` : "AND emissao >= '2026-04-01'";
+        const dateFilter = `AND emissao BETWEEN '${dStart}' AND '${dEnd}'`;
 
         // Obter Perfil e UF do Cliente
         const clientInfo = await query(`
@@ -823,8 +849,7 @@ app.post('/api/import/vendas', upload.single('file'), async (req, res) => {
 app.get('/api/produtos', async (req, res) => {
     try {
         const { start, end, marca, apenasOportunidade } = req.query;
-        const dStart = start || '2026-04-01';
-        const dEnd = end || '2026-04-30';
+        const { dStart, dEnd } = getDefaultDates(start, end);
 
         let where = `v.emissao BETWEEN ? AND ? AND (v.status = '5' OR v.status = '6') AND v.almox = '20'`;
         const params = [dStart, dEnd];
@@ -945,8 +970,7 @@ app.get('/api/produtos/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { start, end } = req.query;
-        const dStart = start || '2026-04-01';
-        const dEnd = end || '2026-04-30';
+        const { dStart, dEnd } = getDefaultDates(start, end);
 
         const product = await query(`SELECT cod_produto, descricao, marca, categoria, image_url, saldo, pv FROM estoque WHERE cod_produto = ?`, [id]);
         

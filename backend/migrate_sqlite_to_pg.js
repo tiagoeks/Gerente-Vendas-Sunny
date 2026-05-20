@@ -51,7 +51,7 @@ async function migrateTable(tableName, pgInsertQuery, conflictResolution = '', p
     // Obter todas as colunas da tabela do SQLite para fazer o SELECT correto
     const sqliteRows = await getSqliteData(`SELECT * FROM ${tableName}`);
     
-    // Preparar inserção em lotes (batching) de 500 registros para alta performance
+    // Preparar inserção em lotes (batching) de 500 registros para alta performance (Bulk Insert)
     const batchSize = 500;
     let successCount = 0;
     
@@ -60,23 +60,32 @@ async function migrateTable(tableName, pgInsertQuery, conflictResolution = '', p
         
         await pgClient.query('BEGIN');
         try {
-            for (const row of batch) {
-                const keys = Object.keys(row);
-                // Filtrar colunas geradas automaticamente (como id/serial) se houver
+            if (batch.length > 0) {
+                const keys = Object.keys(batch[0]);
                 const filteredKeys = keys.filter(k => k !== 'id');
-                const values = filteredKeys.map(k => row[k]);
-                
-                const placeholders = filteredKeys.map((_, idx) => `$${idx + 1}`).join(', ');
                 const columns = filteredKeys.join(', ');
+                
+                const values = [];
+                const valuePlaceholders = [];
+                let paramIdx = 1;
+                
+                for (const row of batch) {
+                    const rowPlaceholders = [];
+                    for (const key of filteredKeys) {
+                        rowPlaceholders.push(`$${paramIdx++}`);
+                        values.push(row[key]);
+                    }
+                    valuePlaceholders.push(`(${rowPlaceholders.join(', ')})`);
+                }
                 
                 const queryStr = `
                     INSERT INTO ${tableName} (${columns}) 
-                    VALUES (${placeholders}) 
+                    VALUES ${valuePlaceholders.join(', ')} 
                     ${conflictResolution}
                 `;
                 
                 await pgClient.query(queryStr, values);
-                successCount++;
+                successCount += batch.length;
             }
             await pgClient.query('COMMIT');
         } catch (err) {
@@ -173,6 +182,10 @@ async function startMigration() {
     try {
         // Garantir criação das tabelas antes da migração
         await initPgDb(pgClient);
+
+        // Limpar dados antigos para evitar duplicatas
+        console.log("🧹 Limpando dados antigos do PostgreSQL para garantir migração limpa...");
+        await pgClient.query('TRUNCATE TABLE vendas, estoque, clientes_perfil, marcas_mestre, marcas_legado RESTART IDENTITY CASCADE');
 
         // 1. Marcas Mestre
         await migrateTable(

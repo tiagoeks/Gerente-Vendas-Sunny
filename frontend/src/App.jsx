@@ -22,7 +22,32 @@ const imageUrlToBase64 = async (url) => {
     }
 };
 
+const getDynamicDateRange = (periodo) => {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = today.getMonth(); // 0-indexed
+  const pad = (n) => String(n).padStart(2, '0');
 
+  let s = `${y}-${pad(m + 1)}-01`;
+  let e = `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`;
+
+  if (periodo === 'Mês Anterior') {
+    const prevMonthDate = new Date(y, m - 1, 1);
+    const prevY = prevMonthDate.getFullYear();
+    const prevM = prevMonthDate.getMonth();
+    s = `${prevY}-${pad(prevM + 1)}-01`;
+    e = `${prevY}-${pad(prevM + 1)}-${pad(new Date(prevY, prevM + 1, 0).getDate())}`;
+  } else if (periodo === 'Últimos 3 Meses') {
+    const threeMonthsAgo = new Date(y, m - 2, 1);
+    s = `${threeMonthsAgo.getFullYear()}-${pad(threeMonthsAgo.getMonth() + 1)}-01`;
+    e = `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`;
+  } else if (periodo === 'Ano Atual') {
+    s = `${y}-01-01`;
+    e = `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`;
+  }
+
+  return { start: s, end: e };
+};
 const ScoreBadge = ({ score }) => {
   const getColor = (s) => s >= 8 ? 'var(--success)' : s >= 6.5 ? 'var(--info)' : s >= 4 ? 'var(--warning)' : 'var(--danger)';
   const getBgColor = (s) => {
@@ -93,10 +118,13 @@ const View360 = ({ client, onBack, globalFilters }) => {
     const [preOrder, setPreOrder] = useState([]);
     const [brandFilter, setBrandFilter] = useState(null);
     const [hideAssortment, setHideAssortment] = useState(false);
-    const [localFilters, setLocalFilters] = useState({
-        periodo: globalFilters?.periodo || 'Mês Atual',
-        start: globalFilters?.start || '2026-04-01',
-        end: globalFilters?.end || '2026-04-30'
+    const [localFilters, setLocalFilters] = useState(() => {
+        const initialLocalDates = getDynamicDateRange(globalFilters?.periodo || 'Mês Atual');
+        return {
+            periodo: globalFilters?.periodo || 'Mês Atual',
+            start: globalFilters?.start || initialLocalDates.start,
+            end: globalFilters?.end || initialLocalDates.end
+        };
     });
 
     const togglePreOrder = (prod) => {
@@ -1794,9 +1822,12 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('clientes');
   const [backgroundTask, setBackgroundTask] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ 
-    search: '', uf: 'Todos', vendedor: 'Todos', status: 'Todos', gerente: 'Todos', 
-    periodo: 'Mês Atual', start: '2026-04-01', end: '2026-04-30', compare: false 
+  const [filters, setFilters] = useState(() => {
+    const initialDates = getDynamicDateRange('Mês Atual');
+    return { 
+      search: '', uf: 'Todos', vendedor: 'Todos', status: 'Todos', gerente: 'Todos', 
+      periodo: 'Mês Atual', start: initialDates.start, end: initialDates.end, compare: false 
+    };
   });
   const [metaFiltros, setMetaFiltros] = useState({ vendedores: [], ufs: [], gerentes: [] });
   const [clientsData, setClientsData] = useState({ items: [], kpis: {}, grupos: { criticos: 0, alerta: 0, saudavel: 0, oportunidades: 0 } });
@@ -1859,11 +1890,12 @@ const App = () => {
   };
 
   const handlePeriodChange = (p) => {
-    let s = '2026-04-01', e = '2026-04-30';
-    if (p === 'Últimos 3 Meses') { s = '2026-02-01'; e = '2026-04-30'; }
-    else if (p === 'Ano Atual') { s = '2026-01-01'; e = '2026-04-30'; }
-    else if (p === 'Mês Anterior') { s = '2026-03-01'; e = '2026-03-31'; }
-    setFilters({ ...filters, periodo: p, start: s, end: e });
+    if (p === 'Personalizado') {
+      setFilters(prev => ({ ...prev, periodo: p }));
+      return;
+    }
+    const { start, end } = getDynamicDateRange(p);
+    setFilters(prev => ({ ...prev, periodo: p, start, end }));
   };
 
   useEffect(() => {
@@ -2030,7 +2062,10 @@ const App = () => {
                         </div>
 
                         <div style={{flex: 1, display:'flex', justifyContent:'flex-end', gap:'12px', alignItems:'center'}}>
-                            <button className="btn-clear-minimal" onClick={() => setFilters({search: '', uf:'Todos', vendedor:'Todos', perfil:'Todos', status:'Todos', gerente:'Todos', periodo:'Mês Atual', start:'2026-04-01', end:'2026-04-30', compare: false})}>
+                            <button className="btn-clear-minimal" onClick={() => {
+                                const d = getDynamicDateRange('Mês Atual');
+                                setFilters({search: '', uf:'Todos', vendedor:'Todos', perfil:'Todos', status:'Todos', gerente:'Todos', periodo:'Mês Atual', start: d.start, end: d.end, compare: false});
+                            }}>
                                 Limpar Filtros
                             </button>
                             <button className="btn-sec" onClick={handleExport} style={{padding:'8px 12px', fontSize:'0.75rem'}}>📥 Exportar</button>
