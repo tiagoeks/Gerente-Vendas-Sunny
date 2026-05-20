@@ -681,38 +681,62 @@ const PORTAL_USER = process.env.SUNNY_PORTAL_USER || 'trocha';
 const PORTAL_PASS = process.env.SUNNY_PORTAL_PASS || '123';
 
 async function fetchPortalSunny(endpoint) {
-    const https = require('https');
     const basicAuth = 'BASIC ' + Buffer.from(`${PORTAL_USER}:${PORTAL_PASS}`).toString('base64');
     const url = `${PORTAL_BASE_URL}${endpoint}`;
     
-    return new Promise((resolve, reject) => {
-        const options = {
+    // Salva o estado original e ignora a validação estrita de SSL temporariamente
+    const originalReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+    try {
+        console.log(`[Portal Sync] Fazendo fetch em: ${url}`);
+        
+        const response = await fetch(url, {
             method: 'GET',
             headers: {
                 'Authorization': basicAuth,
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            rejectUnauthorized: false // aceita certificados auto-assinados
-        };
-        
-        const req = https.get(url, options, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                try {
-                    if (res.statusCode === 401) reject(new Error('Credenciais inválidas (401)'));
-                    else if (res.statusCode === 404) reject(new Error(`Endpoint não encontrado: ${endpoint}`));
-                    else if (res.statusCode >= 400) reject(new Error(`Erro HTTP ${res.statusCode}`));
-                    else resolve({ status: res.statusCode, data: JSON.parse(data) });
-                } catch (e) {
-                    reject(new Error(`Resposta inválida do portal: ${data.substring(0, 200)}`));
-                }
-            });
+                'Accept': 'application/json, text/plain, */*',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Connection': 'keep-alive'
+            }
         });
-        req.on('error', reject);
-        req.setTimeout(30000, () => { req.destroy(); reject(new Error('Timeout ao conectar ao portal Sunny')); });
-    });
+
+        // Restaura a configuração TLS original
+        if (originalReject === undefined) {
+            delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        } else {
+            process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalReject;
+        }
+
+        if (response.status === 401) {
+            throw new Error('Credenciais inválidas (401)');
+        }
+        if (response.status === 404) {
+            throw new Error(`Endpoint não encontrado (404): ${endpoint}`);
+        }
+        if (!response.ok) {
+            throw new Error(`Erro HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const text = await response.text();
+        try {
+            return { status: response.status, data: JSON.parse(text) };
+        } catch (e) {
+            throw new Error(`Resposta do portal não é um JSON válido: ${text.substring(0, 200)}`);
+        }
+    } catch (err) {
+        // Garante a restauração do TLS mesmo em caso de erro na requisição
+        if (originalReject === undefined) {
+            delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        } else {
+            process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalReject;
+        }
+        throw err;
+    }
 }
 
 app.get('/api/sync-portal-sunny', async (req, res) => {
