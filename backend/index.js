@@ -745,6 +745,8 @@ app.get('/api/sync-portal-sunny', async (req, res) => {
         
         // Tentar múltiplos endpoints possíveis para tabela de preço/estoque
         const endpointsParaTentar = [
+            '/listaprodutos',
+            '/listaprodutos?take=9999',
             '/produtos',
             '/estoque',
             '/tabelapreco',
