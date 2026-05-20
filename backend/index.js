@@ -108,6 +108,17 @@ const initDb = async () => {
                 categoria TEXT
             )
         `);
+        
+        // Garante que pv, pdv e saldo sejam tipos flutuantes (DOUBLE PRECISION) se a tabela foi criada anteriormente como INTEGER
+        try {
+            await query(`ALTER TABLE estoque ALTER COLUMN pv TYPE DOUBLE PRECISION USING pv::double precision`);
+            await query(`ALTER TABLE estoque ALTER COLUMN pdv TYPE DOUBLE PRECISION USING pdv::double precision`);
+            await query(`ALTER TABLE estoque ALTER COLUMN saldo TYPE DOUBLE PRECISION USING saldo::double precision`);
+            console.log('[Db Init] Colunas pv, pdv e saldo da tabela estoque verificadas/migradas para DOUBLE PRECISION.');
+        } catch (alterErr) {
+            console.log('[Db Init] Não foi necessário alterar colunas da tabela estoque:', alterErr.message);
+        }
+
         await query(`
             CREATE TABLE IF NOT EXISTS clientes_perfil (
                 cliente_id TEXT PRIMARY KEY,
@@ -745,8 +756,9 @@ app.get('/api/sync-portal-sunny', async (req, res) => {
         
         // Tentar múltiplos endpoints possíveis para tabela de preço/estoque
         const endpointsParaTentar = [
-            '/listaprodutos',
+            '/listaprodutos?take=10000',
             '/listaprodutos?take=9999',
+            '/listaprodutos',
             '/produtos',
             '/estoque',
             '/tabelapreco',
@@ -771,7 +783,15 @@ app.get('/api/sync-portal-sunny', async (req, res) => {
                     produtos = arr;
                     endpointUsado = ep;
                     console.log(`[Portal Sync] ✅ Endpoint ${ep} retornou ${arr.length} produtos`);
-                    break;
+                    
+                    // Se o endpoint retornou uma lista grande (mais de 20 itens), consideramos bem sucedido
+                    // Se retornou poucos itens (ex: 10) e ainda temos endpoints de paginação para tentar,
+                    // continuamos tentando para ver se achamos um que retorne a lista inteira.
+                    if (arr.length > 20) {
+                        break;
+                    } else {
+                        console.log(`[Portal Sync] Endpoint ${ep} retornou apenas ${arr.length} itens. Continuaremos buscando por um endpoint completo...`);
+                    }
                 }
             } catch (e) {
                 lastError = e;
