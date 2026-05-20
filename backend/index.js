@@ -503,9 +503,9 @@ app.get('/api/clientes/:id', async (req, res) => {
                 SUM(v.quantidade) as qtd, SUM(v.valor_total) as total,
                 (SUM(v.valor_total) / NULLIF(SUM(v.quantidade), 0)) as preco_medio,
                 (SELECT COALESCE(v2.valor_unitario, v2.valor_total / NULLIF(v2.quantidade, 0), 0) FROM vendas v2 
-                 WHERE v2.cnpj = v.cnpj AND v2.produto_id = v.produto_id 
+                 WHERE v2.cnpj = ? AND v2.produto_id = v.produto_id 
                  AND (v2.status = '5' OR v2.status = '6') AND v2.almox = '20'
-                 ORDER BY emissao DESC LIMIT 1) as preco_ultima,
+                 ORDER BY v2.emissao DESC LIMIT 1) as preco_ultima,
                 MAX(v.emissao) as ultima_data,
                 MIN(v.emissao) as primeira_data,
                 COUNT(DISTINCT v.num_docto) as total_pedidos_sku,
@@ -518,7 +518,7 @@ app.get('/api/clientes/:id', async (req, res) => {
             WHERE v.cnpj = ? AND (v.status = '5' OR v.status = '6') AND v.almox = '20' ${dateFilter}
             GROUP BY v.ean, v.descricao_produto, v.produto_id, COALESCE(e.marca, v.marca)
             ORDER BY total DESC
-        `, [fatTotal, id]);
+        `, [id, fatTotal, id]);
 
         // 5. Oportunidades (Gap de Mercado - Itens mais vendidos da Sunny Nacionalmente que o cliente NÃO tem no período)
         const marketGap = await query(`
