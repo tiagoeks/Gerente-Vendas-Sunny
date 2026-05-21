@@ -1680,12 +1680,15 @@ const ModuloProdutos = () => {
     const [data, setData] = useState({ stats: {}, items: [] });
     const [loading, setLoading] = useState(true);
     const [selectedProduct, setSelectedProduct] = useState(null);
-    const [filters, setFilters] = useState({
-        periodo: 'Mês Atual',
-        start: '2026-04-01',
-        end: '2026-04-30',
-        marca: 'Todos',
-        apenasOportunidade: false
+    const [filters, setFilters] = useState(() => {
+        const initialDates = getDynamicDateRange('Mês Atual');
+        return {
+            periodo: 'Mês Atual',
+            start: initialDates.start,
+            end: initialDates.end,
+            marca: 'Todos',
+            apenasOportunidade: false
+        };
     });
 
     useEffect(() => {
@@ -1704,13 +1707,12 @@ const ModuloProdutos = () => {
     }, [filters]);
 
     const handlePeriodChange = (p) => {
-        let s = '', e = '';
-        if (p === 'Mês Atual') { s = '2026-04-01'; e = '2026-04-30'; }
-        else if (p === 'Mês Anterior') { s = '2026-03-01'; e = '2026-03-31'; }
-        else if (p === 'Últimos 3 Meses') { s = '2026-02-01'; e = '2026-04-30'; }
-        else if (p === 'Ano Atual') { s = '2026-01-01'; e = '2026-12-31'; }
-        else if (p === 'Personalizado') { s = filters.start; e = filters.end; }
-        setFilters({...filters, periodo: p, start: s, end: e });
+        if (p === 'Personalizado') {
+            setFilters(prev => ({ ...prev, periodo: p }));
+            return;
+        }
+        const { start, end } = getDynamicDateRange(p);
+        setFilters(prev => ({ ...prev, periodo: p, start, end }));
     };
 
     const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(val || 0);
@@ -1801,7 +1803,7 @@ const ModuloProdutos = () => {
                             </label>
                         </div>
                     )}
-                    <div className="context-group">
+                    <div className={`context-group ${filters.periodo === 'Personalizado' ? 'expanded' : ''}`}>
                         <span className="ctx-icon">📅</span>
                         <select value={filters.periodo} onChange={e => handlePeriodChange(e.target.value)}>
                             <option>Mês Atual</option>
@@ -1810,6 +1812,13 @@ const ModuloProdutos = () => {
                             <option>Ano Atual</option>
                             <option>Personalizado</option>
                         </select>
+                        {filters.periodo === 'Personalizado' && (
+                            <div className="date-inputs">
+                                <input type="date" value={filters.start} onChange={e => setFilters({...filters, start: e.target.value})} />
+                                <span>até</span>
+                                <input type="date" value={filters.end} onChange={e => setFilters({...filters, end: e.target.value})} />
+                            </div>
+                        )}
                     </div>
                     <div className="context-group">
                         <span className="ctx-icon">🏷️</span>
@@ -1823,6 +1832,9 @@ const ModuloProdutos = () => {
                             <option value="Super Mario">Super Mario</option>
                             <option value="Batman">Batman</option>
                         </select>
+                    </div>
+                    <div className="date-range-badge">
+                        {filters.start.split('-').reverse().join('/')} - {filters.end.split('-').reverse().join('/')}
                     </div>
                     <button className="btn-sec" onClick={exportProdutosPDF} style={{padding:'8px 16px', fontSize:'0.8rem', fontWeight:'800', display:'flex', gap:'8px', alignItems:'center'}}>
                         <span>📄</span> PDF Dossiê
