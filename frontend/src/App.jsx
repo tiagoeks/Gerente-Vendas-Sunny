@@ -1093,6 +1093,15 @@ const Importacao = ({ onStartTask, onFinishTask, activeTask }) => {
     };
 
     const [syncModal, setSyncModal] = React.useState({ open: false, loading: false, result: null });
+    const [salesSyncModal, setSalesSyncModal] = React.useState({
+        open: false,
+        loading: false,
+        mode: 'atualizar',
+        startDate: '',
+        endDate: '',
+        result: null,
+        error: null
+    });
 
     const handleSyncPortal = async () => {
         setSyncModal({ open: true, loading: true, result: null });
@@ -1105,6 +1114,30 @@ const Importacao = ({ onStartTask, onFinishTask, activeTask }) => {
         }
     };
 
+    const handleSyncVendas = async () => {
+        setSalesSyncModal(prev => ({ ...prev, loading: true, result: null, error: null }));
+        try {
+            const res = await fetch('/api/sync-nfs', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    mode: salesSyncModal.mode,
+                    startDate: salesSyncModal.startDate,
+                    endDate: salesSyncModal.endDate
+                })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                setSalesSyncModal(prev => ({ ...prev, loading: false, result: data }));
+            } else {
+                setSalesSyncModal(prev => ({ ...prev, loading: false, error: data.error || 'Erro desconhecido na sincronização.' }));
+            }
+        } catch (err) {
+            setSalesSyncModal(prev => ({ ...prev, loading: false, error: err.message || 'Erro de conexão com o servidor.' }));
+        }
+    };
 
     const modules = [
         { id: 'estoque', label: 'Estoque Disponível', icon: '📦', desc: 'Saldos, PV/PDV e Previsões.' },
@@ -1199,6 +1232,224 @@ const Importacao = ({ onStartTask, onFinishTask, activeTask }) => {
                 </div>
             )}
 
+            {/* Modal de Sincronização Protheus ERP */}
+            {salesSyncModal.open && (
+                <div style={{
+                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)'
+                }}>
+                    <div style={{
+                        background: '#fff', borderRadius: '20px', padding: '40px', maxWidth: '520px', width: '90%',
+                        boxShadow: '0 25px 60px rgba(0,0,0,0.3)', position: 'relative'
+                    }}>
+                        {salesSyncModal.loading ? (
+                            <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: '3rem', marginBottom: '16px', animation: 'spin 1s linear infinite', display: 'inline-block' }}>🔄</div>
+                                <h3 style={{ color: '#003087', fontSize: '1.3rem', marginBottom: '8px' }}>Sincronizando com Protheus ERP</h3>
+                                <p style={{ color: '#718096', fontSize: '0.9rem', marginBottom: '20px' }}>
+                                    {salesSyncModal.mode === 'carga' 
+                                        ? `Buscando notas fiscais do período ${salesSyncModal.startDate.split('-').reverse().join('/')} a ${salesSyncModal.endDate.split('-').reverse().join('/')}...`
+                                        : salesSyncModal.mode === 'revisar'
+                                        ? 'Revisando notas fiscais dos últimos 30 dias...'
+                                        : 'Atualizando notas fiscais (modo rápido)...'}
+                                </p>
+                                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '20px' }}>
+                                    Isso pode levar alguns minutos dependendo do período selecionado.
+                                </p>
+                                <div style={{
+                                    height: '4px', background: '#E2E8F0', borderRadius: '2px', overflow: 'hidden'
+                                }}>
+                                    <div style={{
+                                        height: '100%', width: '70%', background: 'linear-gradient(90deg, #FFD700, #003087)',
+                                        borderRadius: '2px', animation: 'shimmer 1.5s ease-in-out infinite'
+                                    }}/>
+                                </div>
+                            </div>
+                        ) : salesSyncModal.result ? (
+                            <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>✅</div>
+                                <h3 style={{ color: '#276749', fontSize: '1.3rem', marginBottom: '8px' }}>Notas Fiscais Sincronizadas!</h3>
+                                <div style={{
+                                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px',
+                                    margin: '20px 0', textAlign: 'left'
+                                }}>
+                                    <div style={{ background: '#EBF8FF', borderRadius: '12px', padding: '16px', borderLeft: '4px solid #3182CE' }}>
+                                        <div style={{ fontSize: '2rem', fontWeight: '800', color: '#2B6CB0' }}>{salesSyncModal.result.updated}</div>
+                                        <div style={{ fontSize: '0.8rem', color: '#4A5568', marginTop: '4px' }}>Notas Atualizadas/Revisadas</div>
+                                    </div>
+                                    <div style={{ background: '#F0FFF4', borderRadius: '12px', padding: '16px', borderLeft: '4px solid #38A169' }}>
+                                        <div style={{ fontSize: '2rem', fontWeight: '800', color: '#276749' }}>{salesSyncModal.result.inserted}</div>
+                                        <div style={{ fontSize: '0.8rem', color: '#4A5568', marginTop: '4px' }}>Novas Notas Inseridas</div>
+                                    </div>
+                                </div>
+                                <p style={{ color: '#718096', fontSize: '0.85rem', marginBottom: '24px' }}>
+                                    {salesSyncModal.result.detail || salesSyncModal.result.message}
+                                </p>
+                                <button onClick={() => setSalesSyncModal({ open: false, loading: false, mode: 'atualizar', startDate: '', endDate: '', result: null, error: null })} style={{
+                                    background: '#003087', color: '#fff', border: 'none', borderRadius: '10px',
+                                    padding: '12px 32px', fontSize: '1rem', cursor: 'pointer', fontWeight: '600', width: '100%'
+                                }}>Fechar</button>
+                            </div>
+                        ) : salesSyncModal.error ? (
+                            <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>❌</div>
+                                <h3 style={{ color: '#C53030', fontSize: '1.3rem', marginBottom: '8px' }}>Falha na Sincronização</h3>
+                                <div style={{ background: '#FFF5F5', borderRadius: '10px', padding: '16px', margin: '16px 0', textAlign: 'left' }}>
+                                    <p style={{ color: '#C53030', fontSize: '0.9rem', margin: 0, fontFamily: 'monospace' }}>
+                                        {salesSyncModal.error}
+                                    </p>
+                                </div>
+                                <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                                    <button onClick={handleSyncVendas} style={{
+                                        flex: 1, background: '#003087', color: '#fff', border: 'none', borderRadius: '10px',
+                                        padding: '12px', fontSize: '0.95rem', cursor: 'pointer', fontWeight: '600'
+                                    }}>Tentar Novamente</button>
+                                    <button onClick={() => setSalesSyncModal(prev => ({ ...prev, error: null }))} style={{
+                                        flex: 1, background: '#EDF2F7', color: '#4A5568', border: 'none', borderRadius: '10px',
+                                        padding: '12px', fontSize: '0.95rem', cursor: 'pointer', fontWeight: '600'
+                                    }}>Voltar</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div>
+                                <h3 style={{ color: '#003087', fontSize: '1.4rem', margin: '0 0 8px 0', textAlign: 'center' }}>Sincronização de Notas Fiscais</h3>
+                                <p style={{ color: '#718096', fontSize: '0.85rem', margin: '0 0 24px 0', textAlign: 'center' }}>
+                                    Obtenha as notas fiscais (faturamentos reais) diretamente do Protheus ERP.
+                                </p>
+
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+                                    {/* Card Atualizar */}
+                                    <label style={{
+                                        display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '16px',
+                                        borderRadius: '12px', border: `2px solid ${salesSyncModal.mode === 'atualizar' ? '#003087' : '#E2E8F0'}`,
+                                        background: salesSyncModal.mode === 'atualizar' ? '#F0F5FF' : '#fff',
+                                        cursor: 'pointer', transition: 'all 0.2s ease'
+                                    }}>
+                                        <input 
+                                            type="radio" 
+                                            name="syncMode" 
+                                            value="atualizar"
+                                            checked={salesSyncModal.mode === 'atualizar'}
+                                            onChange={() => setSalesSyncModal(prev => ({ ...prev, mode: 'atualizar' }))}
+                                            style={{ marginTop: '3px', accentColor: '#003087' }}
+                                        />
+                                        <div>
+                                            <strong style={{ display: 'block', fontSize: '0.95rem', color: '#1A202C' }}>Atualização Rápida</strong>
+                                            <span style={{ fontSize: '0.8rem', color: '#718096' }}>Busca novas notas emitidas a partir do faturamento mais recente.</span>
+                                        </div>
+                                    </label>
+
+                                    {/* Card Revisar */}
+                                    <label style={{
+                                        display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '16px',
+                                        borderRadius: '12px', border: `2px solid ${salesSyncModal.mode === 'revisar' ? '#003087' : '#E2E8F0'}`,
+                                        background: salesSyncModal.mode === 'revisar' ? '#F0F5FF' : '#fff',
+                                        cursor: 'pointer', transition: 'all 0.2s ease'
+                                    }}>
+                                        <input 
+                                            type="radio" 
+                                            name="syncMode" 
+                                            value="revisar"
+                                            checked={salesSyncModal.mode === 'revisar'}
+                                            onChange={() => setSalesSyncModal(prev => ({ ...prev, mode: 'revisar' }))}
+                                            style={{ marginTop: '3px', accentColor: '#003087' }}
+                                        />
+                                        <div>
+                                            <strong style={{ display: 'block', fontSize: '0.95rem', color: '#1A202C' }}>Revisar Últimos 30 Dias</strong>
+                                            <span style={{ fontSize: '0.8rem', color: '#718096' }}>Sincroniza e atualiza notas do último mês para capturar cancelamentos ou correções.</span>
+                                        </div>
+                                    </label>
+
+                                    {/* Card Carga Histórica */}
+                                    <label style={{
+                                        display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '16px',
+                                        borderRadius: '12px', border: `2px solid ${salesSyncModal.mode === 'carga' ? '#003087' : '#E2E8F0'}`,
+                                        background: salesSyncModal.mode === 'carga' ? '#F0F5FF' : '#fff',
+                                        cursor: 'pointer', transition: 'all 0.2s ease'
+                                    }}>
+                                        <input 
+                                            type="radio" 
+                                            name="syncMode" 
+                                            value="carga"
+                                            checked={salesSyncModal.mode === 'carga'}
+                                            onChange={() => setSalesSyncModal(prev => ({ ...prev, mode: 'carga' }))}
+                                            style={{ marginTop: '3px', accentColor: '#003087' }}
+                                        />
+                                        <div>
+                                            <strong style={{ display: 'block', fontSize: '0.95rem', color: '#1A202C' }}>Carga Histórica Customizada</strong>
+                                            <span style={{ fontSize: '0.8rem', color: '#718096' }}>Importar notas fiscais de um intervalo específico (Ex: um mês inteiro de 2025).</span>
+                                        </div>
+                                    </label>
+                                </div>
+
+                                {/* Form de Carga Histórica */}
+                                {salesSyncModal.mode === 'carga' && (
+                                    <div className="fade-in" style={{
+                                        background: '#F7FAFC', border: '1px solid #E2E8F0', borderRadius: '12px',
+                                        padding: '16px', marginBottom: '24px'
+                                    }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: '#4A5568' }}>Data Início:</label>
+                                                <input 
+                                                    type="date" 
+                                                    value={salesSyncModal.startDate}
+                                                    onChange={(e) => setSalesSyncModal(prev => ({ ...prev, startDate: e.target.value }))}
+                                                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.85rem' }}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: '#4A5568' }}>Data Fim:</label>
+                                                <input 
+                                                    type="date" 
+                                                    value={salesSyncModal.endDate}
+                                                    onChange={(e) => setSalesSyncModal(prev => ({ ...prev, endDate: e.target.value }))}
+                                                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.85rem' }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div style={{
+                                            background: '#FFFBEB', borderLeft: '4px solid #D97706', padding: '10px 12px',
+                                            borderRadius: '6px', fontSize: '0.75rem', color: '#92400E', lineHeight: '1.4'
+                                        }}>
+                                            <strong>⚠️ Limitação de Data Protheus:</strong> O Protheus ERP rejeita buscas antes de <strong>02/01/2025</strong>. 
+                                            Para importar notas de 2020 a 2024, use a importação manual de planilhas Excel.
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <button 
+                                        onClick={handleSyncVendas} 
+                                        disabled={
+                                            salesSyncModal.mode === 'carga' && 
+                                            (!salesSyncModal.startDate || !salesSyncModal.endDate || salesSyncModal.startDate < '2025-01-02' || salesSyncModal.startDate > salesSyncModal.endDate)
+                                        }
+                                        style={{
+                                            flex: 1, background: '#003087', color: '#fff', border: 'none', borderRadius: '10px',
+                                            padding: '12px', fontSize: '0.95rem', cursor: 'pointer', fontWeight: '600',
+                                            opacity: (salesSyncModal.mode === 'carga' && (!salesSyncModal.startDate || !salesSyncModal.endDate || salesSyncModal.startDate < '2025-01-02' || salesSyncModal.startDate > salesSyncModal.endDate)) ? 0.5 : 1
+                                        }}
+                                    >
+                                        Iniciar Sincronização
+                                    </button>
+                                    <button 
+                                        onClick={() => setSalesSyncModal(prev => ({ ...prev, open: false }))} 
+                                        style={{
+                                            flex: 1, background: '#EDF2F7', color: '#4A5568', border: 'none', borderRadius: '10px',
+                                            padding: '12px', fontSize: '0.95rem', cursor: 'pointer', fontWeight: '600'
+                                        }}
+                                    >
+                                        Cancelar
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             <header style={{marginBottom:'32px'}}>
                 <h2 style={{color:'var(--sunny-blue)', fontSize:'2rem', marginBottom:'8px'}}>📥 Importação de Dados</h2>
                 <p style={{color:'var(--text-muted)'}}>Alimente a inteligência Sunny sem precisar parar seu trabalho.</p>
@@ -1208,6 +1459,7 @@ const Importacao = ({ onStartTask, onFinishTask, activeTask }) => {
                 {modules.map(mod => {
                     const isRunning = activeTask?.name === mod.label;
                     const isEstoque = mod.id === 'estoque';
+                    const isVendas = mod.id === 'vendas';
                     return (
                         <div key={mod.id} className="import-card shadow-sm">
                             <div className="import-icon">{mod.icon}</div>
@@ -1250,6 +1502,29 @@ const Importacao = ({ onStartTask, onFinishTask, activeTask }) => {
                                 >
                                     <span style={{ fontSize: '1rem' }}>{syncModal.loading ? '🔄' : '🌐'}</span>
                                     {syncModal.loading ? 'Sincronizando...' : 'Sincronizar via Portal Sunny'}
+                                </button>
+                            )}
+
+                            {/* Botão exclusivo do card de Vendas */}
+                            {isVendas && (
+                                <button
+                                    id="btn-sync-protheus-vendas"
+                                    onClick={() => setSalesSyncModal(prev => ({ ...prev, open: true }))}
+                                    style={{
+                                        marginTop: '12px', width: '100%', padding: '11px 16px',
+                                        background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)',
+                                        color: '#001D54',
+                                        border: '2px solid transparent',
+                                        borderRadius: '10px', fontSize: '0.85rem', fontWeight: '700',
+                                        cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                                        transition: 'all 0.2s ease', letterSpacing: '0.3px'
+                                    }}
+                                    onMouseEnter={e => { e.target.style.transform = 'translateY(-1px)'; e.target.style.boxShadow = '0 6px 20px rgba(255,215,0,0.4)'; }}
+                                    onMouseLeave={e => { e.target.style.transform = ''; e.target.style.boxShadow = ''; }}
+                                >
+                                    <span style={{ fontSize: '1rem' }}>🌐</span>
+                                    Sincronizar via Protheus ERP
                                 </button>
                             )}
 

@@ -125,7 +125,8 @@ async function initPgDb(pgClient) {
             nome_vendedor TEXT,
             gerente_id TEXT,
             marca TEXT,
-            ean TEXT
+            ean TEXT,
+            natureza_operacao TEXT
         )
     `);
     await pgClient.query(`
@@ -171,6 +172,7 @@ async function initPgDb(pgClient) {
     await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_vendedor ON vendas(vendedor_id)`);
     await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_status ON vendas(status)`);
     await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_emissao ON vendas(emissao)`);
+    await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_vendas_doc_prod ON vendas(num_docto, produto_id)`);
     console.log("✅ Tabelas inicializadas no PostgreSQL.");
 }
 

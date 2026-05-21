@@ -87,7 +87,8 @@ const initDb = async () => {
                 nome_vendedor TEXT,
                 gerente_id TEXT,
                 marca TEXT,
-                ean TEXT
+                ean TEXT,
+                natureza_operacao TEXT
             )
         `);
         await query(`
@@ -119,6 +120,14 @@ const initDb = async () => {
             console.log('[Db Init] Não foi necessário alterar colunas da tabela estoque:', alterErr.message);
         }
 
+        // Garante que a coluna natureza_operacao exista na tabela vendas do Postgres
+        try {
+            await query(`ALTER TABLE vendas ADD COLUMN IF NOT EXISTS natureza_operacao TEXT`);
+            console.log('[Db Init] Coluna natureza_operacao na tabela vendas verificada/adicionada no PostgreSQL.');
+        } catch (alterErr) {
+            console.log('[Db Init] Não foi necessário alterar coluna natureza_operacao no PostgreSQL:', alterErr.message);
+        }
+
         await query(`
             CREATE TABLE IF NOT EXISTS clientes_perfil (
                 cliente_id TEXT PRIMARY KEY,
@@ -144,6 +153,7 @@ const initDb = async () => {
         await query(`CREATE INDEX IF NOT EXISTS idx_vendedor ON vendas(vendedor_id)`);
         await query(`CREATE INDEX IF NOT EXISTS idx_status ON vendas(status)`);
         await query(`CREATE INDEX IF NOT EXISTS idx_emissao ON vendas(emissao)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_vendas_doc_prod ON vendas(num_docto, produto_id)`);
     } else {
         // Tabela de Perfil de Clientes no SQLite
         db.run(`CREATE TABLE IF NOT EXISTS clientes_perfil (
@@ -153,8 +163,10 @@ const initDb = async () => {
         )`);
         // Migrações no SQLite
         db.run("ALTER TABLE vendas ADD COLUMN valor_unitario REAL", () => {});
+        db.run("ALTER TABLE vendas ADD COLUMN natureza_operacao TEXT", () => {});
         db.run("ALTER TABLE estoque ADD COLUMN image_url TEXT", () => {});
         db.run("ALTER TABLE estoque ADD COLUMN categoria TEXT", () => {});
+        db.run("CREATE INDEX IF NOT EXISTS idx_vendas_doc_prod ON vendas(num_docto, produto_id)", () => {});
     }
 };
 
@@ -993,9 +1005,6 @@ app.post('/api/import/vendas', upload.single('file'), async (req, res) => {
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         const data = xlsx.utils.sheet_to_json(sheet);
         
-        // 1. Carregar notas existentes para cache (Evita milhares de SELECTs)
-        const existingDocs = new Set((await query('SELECT num_docto FROM vendas')).map(v => String(v.num_docto)));
-        
         let added = 0;
         let ignored = 0;
 
@@ -1014,7 +1023,7 @@ app.post('/api/import/vendas', upload.single('file'), async (req, res) => {
             const client = await pgPool.connect();
             try {
                 await client.query("BEGIN");
-                const insertQuery = `INSERT INTO vendas (num_docto, emissao, cnpj, nome_cliente, produto_id, ean, descricao_produto, quantidade, valor_total, valor_unitario, nome_vendedor, uf, marca, status, almox, gerente_id, vendedor_id, cliente_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '5', '20', $14, $15, $16)`;
+                const insertQuery = `INSERT INTO vendas (num_docto, emissao, cnpj, nome_cliente, produto_id, ean, descricao_produto, quantidade, valor_total, valor_unitario, nome_vendedor, uf, marca, status, almox, gerente_id, vendedor_id, cliente_id, natureza_operacao) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`;
                 
                 for (const row of data) {
                     const getV = (targets) => {
@@ -1026,6 +1035,25 @@ app.post('/api/import/vendas', upload.single('file'), async (req, res) => {
 
                     const numDocto = sanitize(getV(['numdocto', 'nffiscal', 'documento']));
                     if (!numDocto) continue;
+
+                    const rawAlmox = getV(['almox', 'almoxarifado']);
+                    const almoxVal = rawAlmox !== null && rawAlmox !== undefined ? String(rawAlmox).trim() : '';
+                    const rawStatus = getV(['status', 'situa']);
+                    const statusVal = rawStatus !== null && rawStatus !== undefined ? String(rawStatus).trim() : '';
+                    
+                    // Filtrar: almox deve ser '20' ou '0020' se presente. Se ausente, assume '20'.
+                    if (almoxVal !== '' && almoxVal !== '20' && almoxVal !== '0020') {
+                        ignored++;
+                        continue;
+                    }
+                    // Filtrar: status deve ser '5' ou '6' (ou '05', '06') se presente. Se ausente, assume '5'.
+                    if (statusVal !== '' && statusVal !== '5' && statusVal !== '6' && statusVal !== '05' && statusVal !== '06') {
+                        ignored++;
+                        continue;
+                    }
+                    
+                    const finalAlmox = almoxVal !== '' ? (almoxVal === '0020' ? '20' : almoxVal) : '20';
+                    const finalStatus = statusVal !== '' ? (statusVal === '05' ? '5' : (statusVal === '06' ? '6' : statusVal)) : '5';
 
                     const dataVenda = excelDate(getV(['emissao', 'data']));
                     const cnpj = sanitize(getV(['cnpj', 'cgccpf']));
@@ -1044,10 +1072,11 @@ app.post('/api/import/vendas', upload.single('file'), async (req, res) => {
                     const uf = String(getV(['uf', 'estado']) || '').trim().toUpperCase();
                     const marca = String(getV(['marca', 'fabricante', 'circana']) || '').trim();
                     const gerenteId = sanitize(getV(['gerente', 'codgerente']));
+                    const natOperacaoVal = String(getV(['natureza', 'operacao', 'naturezadeoperacao']) || 'Venda').trim();
 
                     await client.query(insertQuery, [
                         numDocto, dataVenda, cnpj, clienteNome, produtoId, ean, descricao, 
-                        qtd, valorTotal, valorUnitario, nomeVendedor, uf, marca, gerenteId, vendedorId, clienteId
+                        qtd, valorTotal, valorUnitario, nomeVendedor, uf, marca, finalStatus, finalAlmox, gerenteId, vendedorId, clienteId, natOperacaoVal
                     ]);
                     added++;
                 }
@@ -1063,7 +1092,7 @@ app.post('/api/import/vendas', upload.single('file'), async (req, res) => {
                 db.serialize(() => {
                     db.run("BEGIN TRANSACTION");
                     
-                    const stmt = db.prepare(`INSERT OR REPLACE INTO vendas (num_docto, emissao, cnpj, nome_cliente, produto_id, ean, descricao_produto, quantidade, valor_total, valor_unitario, nome_vendedor, uf, marca, status, almox, gerente_id, vendedor_id, cliente_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '5', '20', ?, ?, ?)`);
+                    const stmt = db.prepare(`INSERT OR REPLACE INTO vendas (num_docto, emissao, cnpj, nome_cliente, produto_id, ean, descricao_produto, quantidade, valor_total, valor_unitario, nome_vendedor, uf, marca, status, almox, gerente_id, vendedor_id, cliente_id, natureza_operacao) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
                     for (const row of data) {
                         const getV = (targets) => {
@@ -1075,6 +1104,25 @@ app.post('/api/import/vendas', upload.single('file'), async (req, res) => {
 
                         const numDocto = sanitize(getV(['numdocto', 'nffiscal', 'documento']));
                         if (!numDocto) continue;
+
+                        const rawAlmox = getV(['almox', 'almoxarifado']);
+                        const almoxVal = rawAlmox !== null && rawAlmox !== undefined ? String(rawAlmox).trim() : '';
+                        const rawStatus = getV(['status', 'situa']);
+                        const statusVal = rawStatus !== null && rawStatus !== undefined ? String(rawStatus).trim() : '';
+                        
+                        // Filtrar: almox deve ser '20' ou '0020' se presente. Se ausente, assume '20'.
+                        if (almoxVal !== '' && almoxVal !== '20' && almoxVal !== '0020') {
+                            ignored++;
+                            continue;
+                        }
+                        // Filtrar: status deve ser '5' ou '6' (ou '05', '06') se presente. Se ausente, assume '5'.
+                        if (statusVal !== '' && statusVal !== '5' && statusVal !== '6' && statusVal !== '05' && statusVal !== '06') {
+                            ignored++;
+                            continue;
+                        }
+                        
+                        const finalAlmox = almoxVal !== '' ? (almoxVal === '0020' ? '20' : almoxVal) : '20';
+                        const finalStatus = statusVal !== '' ? (statusVal === '05' ? '5' : (statusVal === '06' ? '6' : statusVal)) : '5';
 
                         const dataVenda = excelDate(getV(['emissao', 'data']));
                         const cnpj = sanitize(getV(['cnpj', 'cgccpf']));
@@ -1093,10 +1141,11 @@ app.post('/api/import/vendas', upload.single('file'), async (req, res) => {
                         const uf = String(getV(['uf', 'estado']) || '').trim().toUpperCase();
                         const marca = String(getV(['marca', 'fabricante', 'circana']) || '').trim();
                         const gerenteId = sanitize(getV(['gerente', 'codgerente']));
+                        const natOperacaoVal = String(getV(['natureza', 'operacao', 'naturezadeoperacao']) || 'Venda').trim();
 
                         stmt.run([
                             numDocto, dataVenda, cnpj, clienteNome, produtoId, ean, descricao, 
-                            qtd, valorTotal, valorUnitario, nomeVendedor, uf, marca, gerenteId, vendedorId, clienteId
+                            qtd, valorTotal, valorUnitario, nomeVendedor, uf, marca, finalStatus, finalAlmox, gerenteId, vendedorId, clienteId, natOperacaoVal
                         ]);
                         
                         added++;
@@ -1121,6 +1170,400 @@ app.post('/api/import/vendas', upload.single('file'), async (req, res) => {
         console.error(`[Import Vendas] Erro:`, err);
         if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         res.status(500).json({ error: err.message }); 
+    }
+});
+
+// Helper para dividir intervalo de datas em blocos de X dias
+function getChunks(startStr, endStr, chunkSizeDays = 15) {
+    const start = new Date(startStr + 'T00:00:00');
+    const end = new Date(endStr + 'T00:00:00');
+    const chunks = [];
+    
+    let currentStart = new Date(start);
+    while (currentStart <= end) {
+        let currentEnd = new Date(currentStart);
+        currentEnd.setDate(currentEnd.getDate() + chunkSizeDays - 1);
+        if (currentEnd > end) {
+            currentEnd = new Date(end);
+        }
+        
+        const yStart = currentStart.getFullYear();
+        const mStart = String(currentStart.getMonth() + 1).padStart(2, '0');
+        const dStart = String(currentStart.getDate()).padStart(2, '0');
+        
+        const yEnd = currentEnd.getFullYear();
+        const mEnd = String(currentEnd.getMonth() + 1).padStart(2, '0');
+        const dEnd = String(currentEnd.getDate()).padStart(2, '0');
+        
+        chunks.push({
+            startStr: `${yStart}-${mStart}-${dStart}`,
+            endStr: `${yEnd}-${mEnd}-${dEnd}`,
+            apiStart: `${yStart}${mStart}${dStart}`,
+            apiEnd: `${yEnd}${mEnd}${dEnd}`
+        });
+        
+        currentStart = new Date(currentEnd);
+        currentStart.setDate(currentStart.getDate() + 1);
+    }
+    return chunks;
+}
+
+// Endpoint de Sincronização direta com a API do Protheus
+app.post('/api/sync-nfs', async (req, res) => {
+    const { mode, startDate, endDate } = req.body;
+    console.log(`[Sync NFs] Iniciado. Modo: ${mode}, Range recebido: ${startDate} a ${endDate}`);
+    
+    const originalReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    
+    try {
+        let finalStart = '';
+        let finalEnd = '';
+        
+        const todayStr = new Date().toISOString().split('T')[0];
+        
+        if (mode === 'revisar') {
+            const d = new Date();
+            d.setDate(d.getDate() - 30);
+            finalStart = d.toISOString().split('T')[0];
+            finalEnd = todayStr;
+        } else if (mode === 'atualizar') {
+            const maxDateRow = await query("SELECT MAX(emissao) as max_date FROM vendas");
+            const maxDate = maxDateRow[0]?.max_date;
+            if (maxDate && /^\d{4}-\d{2}-\d{2}$/.test(maxDate)) {
+                finalStart = maxDate;
+            } else {
+                finalStart = '2025-01-02';
+            }
+            finalEnd = todayStr;
+        } else if (mode === 'carga') {
+            if (!startDate || !endDate) {
+                throw new Error("Parâmetros startDate e endDate são obrigatórios no modo de carga.");
+            }
+            finalStart = startDate;
+            finalEnd = endDate;
+        } else {
+            throw new Error(`Modo de sincronização inválido: ${mode}`);
+        }
+        
+        // Limita a data de início para Protheus API (mínimo de 2025-01-02)
+        const minAllowedDate = '2025-01-02';
+        if (finalStart < minAllowedDate) {
+            console.log(`[Sync NFs] Data de início ajustada de ${finalStart} para ${minAllowedDate} devido a limitações da API.`);
+            finalStart = minAllowedDate;
+        }
+        
+        if (finalStart > finalEnd) {
+            return res.json({
+                success: true,
+                inserted: 0,
+                updated: 0,
+                message: "A data de início da sincronização é posterior à data de fim. Nada a sincronizar.",
+                detail: `Período verificado: ${finalStart} até ${finalEnd}`
+            });
+        }
+        
+        const chunks = getChunks(finalStart, finalEnd, 15);
+        console.log(`[Sync NFs] Período dividido em ${chunks.length} blocos.`);
+        
+        // Cache de Vendedor -> Gerente
+        const vToGMap = {};
+        try {
+            const mapRows = await query("SELECT DISTINCT vendedor_id, gerente_id FROM vendas WHERE vendedor_id IS NOT NULL AND vendedor_id != ''");
+            mapRows.forEach(r => {
+                if (r.gerente_id) vToGMap[r.vendedor_id] = r.gerente_id;
+            });
+        } catch (dbErr) {
+            console.log("[Sync NFs] Erro ao carregar mapa de gerentes:", dbErr.message);
+        }
+        
+        let totalInserted = 0;
+        let totalUpdated = 0;
+        
+        const user = 'trocha';
+        const pass = '123';
+        const basicAuth = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+        
+        for (const chunk of chunks) {
+            console.log(`[Sync NFs] Processando bloco: ${chunk.startStr} a ${chunk.endStr}`);
+            
+            let skip = 0;
+            const take = 100;
+            let hasMore = true;
+            
+            while (hasMore) {
+                const filterObj = [
+                    ["f2_emissao", ">=", `'${chunk.apiStart}`],
+                    "and",
+                    ["f2_emissao", "<=", `'${chunk.apiEnd}`],
+                    "and",
+                    ["d2_local", "=", "20"],
+                    "and",
+                    [
+                        ["f2_xstatus", "=", "5"],
+                        "or",
+                        ["f2_xstatus", "=", "6"]
+                    ]
+                ];
+                const filterStr = JSON.stringify(filterObj);
+                const param = `usuario=000114&group=null&filter=${encodeURIComponent(filterStr)}`;
+                const url = `https://site-sunny.com.br:8087/rest/nfs/lista?${param}&take=${take}&skip=${skip}`;
+                
+                let response = null;
+                let retries = 3;
+                let delayMs = 1000;
+                
+                while (retries > 0) {
+                    try {
+                        response = await fetch(url, {
+                            method: 'GET',
+                            headers: {
+                                'Authorization': basicAuth,
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json'
+                            }
+                        });
+                        
+                        if (response.ok) {
+                            break;
+                        }
+                        
+                        if (response.status >= 500 || response.status === 429) {
+                            console.log(`[Sync NFs] Resposta HTTP ${response.status} ao chamar API. Tentando novamente em ${delayMs}ms... (${retries - 1} tentativas restantes)`);
+                            retries--;
+                            if (retries === 0) {
+                                const text = await response.text();
+                                throw new Error(`Erro na API Protheus (HTTP ${response.status}): ${text.substring(0, 200)}`);
+                            }
+                            await new Promise(resolve => setTimeout(resolve, delayMs));
+                            delayMs *= 2;
+                        } else {
+                            const text = await response.text();
+                            throw new Error(`Erro na API Protheus (HTTP ${response.status}): ${text.substring(0, 200)}`);
+                        }
+                    } catch (fetchErr) {
+                        retries--;
+                        if (retries === 0) {
+                            throw fetchErr;
+                        }
+                        console.log(`[Sync NFs] Falha na requisição: ${fetchErr.message}. Tentando novamente em ${delayMs}ms... (${retries} tentativas restantes)`);
+                        await new Promise(resolve => setTimeout(resolve, delayMs));
+                        delayMs *= 2;
+                    }
+                }
+                
+                const parsed = await response.json();
+                const items = parsed.data || parsed.items || [];
+                
+                if (items.length === 0) {
+                    hasMore = false;
+                    break;
+                }
+                
+                if (usePostgres) {
+                    const client = await pgPool.connect();
+                    try {
+                        await client.query("BEGIN");
+                        for (const item of items) {
+                            const numDocto = sanitize(item.f2_doc);
+                            const produtoId = sanitize(item.d2_cod);
+                            if (!numDocto || !produtoId) continue;
+                            
+                            let formattedEmissao = '';
+                            if (item.f2_emissao && item.f2_emissao.length === 8) {
+                                formattedEmissao = `${item.f2_emissao.substring(0, 4)}-${item.f2_emissao.substring(4, 6)}-${item.f2_emissao.substring(6, 8)}`;
+                            } else {
+                                formattedEmissao = todayStr;
+                            }
+                            
+                            const cnpj = sanitize(item.a1_cgc);
+                            const clienteNome = String(item.a1_nome || '').trim();
+                            const clienteId = sanitize(item.a1_cod);
+                            const ean = sanitize(item.b1_codbar);
+                            const descricao = String(item.b1_desc || '').trim();
+                            const qtd = parseFloat(item.d2_quant) || 0;
+                            const valorUnitario = parseFloat(item.d2_prcven) || 0;
+                            const valorTotal = parseFloat(item.d2_total) || 0;
+                            const nomeVendedor = String(item.a3_nreduz || '').trim();
+                            const vendedorId = sanitize(item.a3_cod);
+                            const uf = String(item.a1_est || '').trim().toUpperCase();
+                            const marca = String(item.bm_desc || '').trim();
+                            const status = sanitize(item.f2_xstatus) || '5';
+                            const almox = '20';
+                            const gerenteId = vToGMap[vendedorId] || '';
+                            const pedidoCliente = sanitize(item.d2_pedido);
+                            const loja = sanitize(item.a1_loja);
+                            const naturezaOperacao = 'Venda';
+                            
+                            const existRes = await client.query(
+                                "SELECT id FROM vendas WHERE num_docto = $1 AND produto_id = $2",
+                                [numDocto, produtoId]
+                            );
+                            
+                            if (existRes.rows.length > 0) {
+                                await client.query(
+                                    `UPDATE vendas SET 
+                                        emissao = $1, cnpj = $2, nome_cliente = $3, ean = $4, 
+                                        descricao_produto = $5, quantidade = $6, valor_unitario = $7, 
+                                        valor_total = $8, nome_vendedor = $9, uf = $10, marca = $11, 
+                                        status = $12, almox = $13, gerente_id = $14, vendedor_id = $15, 
+                                        cliente_id = $16, pedido_cliente = $17, loja = $18, natureza_operacao = $19
+                                     WHERE num_docto = $20 AND produto_id = $21`,
+                                    [
+                                        formattedEmissao, cnpj, clienteNome, ean, descricao, qtd, 
+                                        valorUnitario, valorTotal, nomeVendedor, uf, marca, status, 
+                                        almox, gerenteId, vendedorId, clienteId, pedidoCliente, loja, 
+                                        naturezaOperacao, numDocto, produtoId
+                                    ]
+                                );
+                                totalUpdated++;
+                            } else {
+                                await client.query(
+                                    `INSERT INTO vendas (
+                                        num_docto, emissao, cnpj, nome_cliente, produto_id, ean, 
+                                        descricao_produto, quantidade, valor_unitario, valor_total, 
+                                        nome_vendedor, uf, marca, status, almox, gerente_id, vendedor_id, 
+                                        cliente_id, pedido_cliente, loja, natureza_operacao
+                                     ) VALUES (
+                                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+                                     )`,
+                                    [
+                                        numDocto, formattedEmissao, cnpj, clienteNome, produtoId, ean, 
+                                        descricao, qtd, valorUnitario, valorTotal, nomeVendedor, uf, 
+                                        marca, status, almox, gerenteId, vendedorId, clienteId, 
+                                        pedidoCliente, loja, naturezaOperacao
+                                    ]
+                                );
+                                totalInserted++;
+                            }
+                        }
+                        await client.query("COMMIT");
+                    } catch (err) {
+                        await client.query("ROLLBACK");
+                        throw err;
+                    } finally {
+                        client.release();
+                    }
+                } else {
+                    // SQLite
+                    await new Promise((resolve, reject) => {
+                        db.serialize(async () => {
+                            db.run("BEGIN TRANSACTION");
+                            try {
+                                for (const item of items) {
+                                    const numDocto = sanitize(item.f2_doc);
+                                    const produtoId = sanitize(item.d2_cod);
+                                    if (!numDocto || !produtoId) continue;
+                                    
+                                    let formattedEmissao = '';
+                                    if (item.f2_emissao && item.f2_emissao.length === 8) {
+                                        formattedEmissao = `${item.f2_emissao.substring(0, 4)}-${item.f2_emissao.substring(4, 6)}-${item.f2_emissao.substring(6, 8)}`;
+                                    } else {
+                                        formattedEmissao = todayStr;
+                                    }
+                                    
+                                    const cnpj = sanitize(item.a1_cgc);
+                                    const clienteNome = String(item.a1_nome || '').trim();
+                                    const clienteId = sanitize(item.a1_cod);
+                                    const ean = sanitize(item.b1_codbar);
+                                    const descricao = String(item.b1_desc || '').trim();
+                                    const qtd = parseFloat(item.d2_quant) || 0;
+                                    const valorUnitario = parseFloat(item.d2_prcven) || 0;
+                                    const valorTotal = parseFloat(item.d2_total) || 0;
+                                    const nomeVendedor = String(item.a3_nreduz || '').trim();
+                                    const vendedorId = sanitize(item.a3_cod);
+                                    const uf = String(item.a1_est || '').trim().toUpperCase();
+                                    const marca = String(item.bm_desc || '').trim();
+                                    const status = sanitize(item.f2_xstatus) || '5';
+                                    const almox = '20';
+                                    const gerenteId = vToGMap[vendedorId] || '';
+                                    const pedidoCliente = sanitize(item.d2_pedido);
+                                    const loja = sanitize(item.a1_loja);
+                                    const naturezaOperacao = 'Venda';
+                                    
+                                    const existing = await new Promise((resSelect) => {
+                                        db.get("SELECT id FROM vendas WHERE num_docto = ? AND produto_id = ?", [numDocto, produtoId], (e, r) => {
+                                            resSelect(r);
+                                        });
+                                    });
+                                    
+                                    if (existing) {
+                                        db.run(
+                                            `UPDATE vendas SET 
+                                                emissao = ?, cnpj = ?, nome_cliente = ?, ean = ?, 
+                                                descricao_produto = ?, quantidade = ?, valor_unitario = ?, 
+                                                valor_total = ?, nome_vendedor = ?, uf = ?, marca = ?, 
+                                                status = ?, almox = ?, gerente_id = ?, vendedor_id = ?, 
+                                                cliente_id = ?, pedido_cliente = ?, loja = ?, natureza_operacao = ?
+                                             WHERE num_docto = ? AND produto_id = ?`,
+                                            [
+                                                formattedEmissao, cnpj, clienteNome, ean, descricao, qtd, 
+                                                valorUnitario, valorTotal, nomeVendedor, uf, marca, status, 
+                                                almox, gerenteId, vendedorId, clienteId, pedidoCliente, loja, 
+                                                naturezaOperacao, numDocto, produtoId
+                                            ]
+                                        );
+                                        totalUpdated++;
+                                    } else {
+                                        db.run(
+                                            `INSERT INTO vendas (
+                                                num_docto, emissao, cnpj, nome_cliente, produto_id, ean, 
+                                                descricao_produto, quantidade, valor_unitario, valor_total, 
+                                                nome_vendedor, uf, marca, status, almox, gerente_id, vendedor_id, 
+                                                cliente_id, pedido_cliente, loja, natureza_operacao
+                                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                            [
+                                                numDocto, formattedEmissao, cnpj, clienteNome, produtoId, ean, 
+                                                descricao, qtd, valorUnitario, valorTotal, nomeVendedor, uf, 
+                                                marca, status, almox, gerenteId, vendedorId, clienteId, 
+                                                pedidoCliente, loja, naturezaOperacao
+                                            ]
+                                        );
+                                        totalInserted++;
+                                    }
+                                }
+                                db.run("COMMIT", (commitErr) => {
+                                    if (commitErr) reject(commitErr);
+                                    else resolve();
+                                });
+                            } catch (sqliteErr) {
+                                db.run("ROLLBACK");
+                                reject(sqliteErr);
+                            }
+                        });
+                    });
+                }
+                
+                if (items.length < take) {
+                    hasMore = false;
+                } else {
+                    skip += take;
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+            }
+        }
+        
+        res.json({
+            success: true,
+            inserted: totalInserted,
+            updated: totalUpdated,
+            message: `Sincronização concluída com sucesso.`,
+            detail: `Período: ${finalStart} a ${finalEnd} | Inseridos: ${totalInserted} | Atualizados: ${totalUpdated}`
+        });
+        
+    } catch (err) {
+        console.error(`[Sync NFs] Erro fatal:`, err);
+        res.status(500).json({
+            success: false,
+            error: err.message,
+            detail: 'Erro interno ao sincronizar notas fiscais com Protheus API.'
+        });
+    } finally {
+        if (originalReject === undefined) {
+            delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        } else {
+            process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalReject;
+        }
     }
 });
 
