@@ -2261,6 +2261,7 @@ const ModuloProdutos = () => {
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('clientes');
+  const [isCollapsed, setIsCollapsed] = useState(() => localStorage.getItem('sidebar_collapsed') === 'true');
   const [backgroundTask, setBackgroundTask] = useState(null);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState(() => {
@@ -2374,21 +2375,67 @@ const App = () => {
     }
   };
 
+  const toggleSidebar = () => {
+    setIsCollapsed(prev => {
+      const next = !prev;
+      localStorage.setItem('sidebar_collapsed', String(next));
+      return next;
+    });
+  };
+
   return (
     <div className="sunny-root">
-        <aside className="sunny-aside">
-            <div className="brand-logo">Sunny</div>
+        <aside className={`sunny-aside ${isCollapsed ? 'collapsed' : ''}`}>
+            <div className="brand-logo-container">
+                <div className="brand-logo">{isCollapsed ? 'S' : 'Sunny'}</div>
+                <button className="collapse-btn" onClick={toggleSidebar} title={isCollapsed ? "Expandir menu" : "Recolher menu"}>
+                    {isCollapsed ? '▶' : '◀'}
+                </button>
+            </div>
             <nav className="side-nav">
-                <button className={`nav-btn ${activeTab==='dashboard'?'active':''}`} onClick={()=>setActiveTab('dashboard')}>📊 Dashboard</button>
-                <button className={`nav-btn ${activeTab==='clientes'?'active':''}`} onClick={()=>setActiveTab('clientes')}>👥 Clientes</button>
-                <button className={`nav-btn ${activeTab==='produtos'?'active':''}`} onClick={()=>setActiveTab('produtos')}>📦 Produtos</button>
-                <button className={`nav-btn ${activeTab==='importacao'?'active':''}`} onClick={()=>setActiveTab('importacao')}>📥 Importação</button>
-                <button className={`nav-btn ${activeTab==='gestao'?'active':''}`} onClick={()=>setActiveTab('gestao')}>🛠️ Gestão</button>
-                <button className="nav-btn">🏢 Rede</button>
-                <button className="nav-btn">👔 Reps</button>
-                <button className="nav-btn">🎯 Radar Completo</button>
+                <button className={`nav-btn ${activeTab==='dashboard'?'active':''}`} onClick={()=>setActiveTab('dashboard')}>
+                    <span className="nav-icon">📊</span>
+                    <span className="nav-text">Dashboard</span>
+                </button>
+                <button className={`nav-btn ${activeTab==='clientes'?'active':''}`} onClick={()=>setActiveTab('clientes')}>
+                    <span className="nav-icon">👥</span>
+                    <span className="nav-text">Clientes</span>
+                </button>
+                <button className={`nav-btn ${activeTab==='produtos'?'active':''}`} onClick={()=>setActiveTab('produtos')}>
+                    <span className="nav-icon">📦</span>
+                    <span className="nav-text">Produtos</span>
+                </button>
+                <button className={`nav-btn ${activeTab==='importacao'?'active':''}`} onClick={()=>setActiveTab('importacao')}>
+                    <span className="nav-icon">📥</span>
+                    <span className="nav-text">Importação</span>
+                </button>
+                <button className={`nav-btn ${activeTab==='gestao'?'active':''}`} onClick={()=>setActiveTab('gestao')}>
+                    <span className="nav-icon">🛠️</span>
+                    <span className="nav-text">Gestão</span>
+                </button>
+                <button className="nav-btn">
+                    <span className="nav-icon">🏢</span>
+                    <span className="nav-text">Rede</span>
+                </button>
+                <button className="nav-btn">
+                    <span className="nav-icon">👔</span>
+                    <span className="nav-text">Reps</span>
+                </button>
+                <button className="nav-btn">
+                    <span className="nav-icon">🎯</span>
+                    <span className="nav-text">Radar Completo</span>
+                </button>
             </nav>
-            <div className="user-box">Tiago Santos<br/><small>Gerente Comercial</small></div>
+            <div className="user-box">
+                {isCollapsed ? (
+                    <div className="user-avatar-collapsed" title="Tiago Santos - Gerente Comercial">TS</div>
+                ) : (
+                    <>
+                        Tiago Santos<br/>
+                        <small>Gerente Comercial</small>
+                    </>
+                )}
+            </div>
         </aside>
 
         <main className="sunny-body">
