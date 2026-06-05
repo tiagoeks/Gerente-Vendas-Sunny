@@ -1280,8 +1280,8 @@ app.post('/api/sync-nfs', async (req, res) => {
         let totalInserted = 0;
         let totalUpdated = 0;
         
-        const user = 'trocha';
-        const pass = '123';
+        const user = PORTAL_USER;
+        const pass = PORTAL_PASS;
         const basicAuth = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
         
         for (const chunk of chunks) {
