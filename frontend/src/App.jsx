@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
@@ -1966,6 +1966,54 @@ const ModuloProdutos = () => {
         };
     });
 
+    const [sortConfig, setSortConfig] = useState({ key: '', dir: '' });
+
+    const handleSort = (key) => {
+        setSortConfig(prev => ({
+            key,
+            dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc'
+        }));
+    };
+
+    const sortedItems = useMemo(() => {
+        if (!sortConfig.key) return data.items || [];
+        return [...(data.items || [])].sort((a, b) => {
+            let va = a[sortConfig.key];
+            let vb = b[sortConfig.key];
+            
+            const na = parseFloat(va);
+            const nb = parseFloat(vb);
+            if (!isNaN(na) && !isNaN(nb)) {
+                return sortConfig.dir === 'desc' ? nb - na : na - nb;
+            }
+            const sa = String(va || '').toLowerCase();
+            const sb = String(vb || '').toLowerCase();
+            return sortConfig.dir === 'desc' ? sb.localeCompare(sa) : sa.localeCompare(sb);
+        });
+    }, [data.items, sortConfig]);
+
+    const SortTh = ({ col, label, align = 'left' }) => {
+        const isActive = sortConfig.key === col;
+        return (
+            <th
+                onClick={() => handleSort(col)}
+                style={{
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    textAlign: align,
+                    background: isActive ? '#EBF4FF' : undefined,
+                    color: isActive ? 'var(--sunny-blue)' : undefined,
+                    whiteSpace: 'nowrap'
+                }}
+            >
+                {label}{' '}
+                <span style={{ opacity: isActive ? 1 : 0.3, fontSize: '0.75rem' }}>
+                    {isActive ? (sortConfig.dir === 'desc' ? '▼' : '▲') : '⇅'}
+                </span>
+            </th>
+        );
+    };
+
     useEffect(() => {
         setLoading(true);
         const url = new URL('/api/produtos', window.location.origin);
@@ -2060,6 +2108,39 @@ const ModuloProdutos = () => {
         doc.save(`Dossie_Produtos_${filters.periodo.replace(' ', '_')}.pdf`);
     };
 
+    const exportProdutosExcel = () => {
+        if (!data.items?.length) return;
+        
+        const headers = activeSubTab === 'performance' ? 
+            ['Código', 'Produto', 'Marca', 'Curva ABC', 'Faturamento (R$)', 'Qtd Vendida (un)', 'Clientes Únicos (PDVs)'] :
+            ['Código', 'Produto', 'Marca', 'Saldo Global (un)', 'Giro no Período (un)', 'Dias de Estoque (DOH)', 'Previsão'];
+            
+        const rows = sortedItems.map(p => {
+            if (activeSubTab === 'performance') {
+                return [p.id, p.nome, p.marca, p.classe_abc, p.faturamento, p.qtd_vendida, p.clientes_unicos];
+            } else {
+                return [p.id, p.nome, p.marca, p.saldo || 0, p.giro_30d || 0, Math.round(p.doh || 0), p.statusPrevisao];
+            }
+        });
+
+        const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, activeSubTab === 'performance' ? 'Performance' : 'Ruptura');
+        
+        // Auto-fit columns
+        const max_chars = headers.map((h, i) => {
+            let max_val = h.length;
+            rows.forEach(r => {
+                const val_str = String(r[i] || '');
+                if (val_str.length > max_val) max_val = val_str.length;
+            });
+            return { wch: max_val + 3 };
+        });
+        worksheet['!cols'] = max_chars;
+
+        XLSX.writeFile(workbook, `radar_produtos_${activeSubTab}_${filters.periodo.toLowerCase().replace(/ /g, '_')}.xlsx`);
+    };
+
     if (selectedProduct) return <ViewProduct360 productCode={selectedProduct} onBack={() => setSelectedProduct(null)} globalFilters={filters} />;
 
     return (
@@ -2114,6 +2195,9 @@ const ModuloProdutos = () => {
                     <button className="btn-sec" onClick={exportProdutosPDF} style={{padding:'8px 16px', fontSize:'0.8rem', fontWeight:'800', display:'flex', gap:'8px', alignItems:'center'}}>
                         <span>📄</span> PDF Dossiê
                     </button>
+                    <button className="btn-sec" onClick={exportProdutosExcel} style={{padding:'8px 16px', fontSize:'0.8rem', fontWeight:'800', display:'flex', gap:'8px', alignItems:'center', marginLeft:'8px'}}>
+                        <span>📊</span> Exportar Excel
+                    </button>
                 </div>
             </header>
 
@@ -2147,17 +2231,17 @@ const ModuloProdutos = () => {
                     <table className="analy-table">
                         <thead>
                             <tr>
-                                <th>Produto</th>
-                                <th style={{textAlign:'center'}}>Curva ABC</th>
-                                <th style={{textAlign:'right'}}>Faturamento</th>
-                                <th style={{textAlign:'center'}}>Qtd Vendida</th>
-                                <th style={{textAlign:'center'}}>Nº Clientes Únicos</th>
+                                <SortTh col="id" label="Produto" align="left" />
+                                <SortTh col="classe_abc" label="Curva ABC" align="center" />
+                                <SortTh col="faturamento" label="Faturamento" align="right" />
+                                <SortTh col="qtd_vendida" label="Qtd Vendida" align="center" />
+                                <SortTh col="clientes_unicos" label="Nº Clientes Únicos" align="center" />
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? <tr><td colSpan="5" style={{padding:'40px', textAlign:'center', color:'var(--text-muted)'}}>Compilando indicadores de performance...</td></tr> : 
                             data.items.length === 0 ? <tr><td colSpan="5" style={{padding:'40px', textAlign:'center'}}>Nenhum produto encontrado com os filtros selecionados.</td></tr> :
-                            data.items.map(p => (
+                            sortedItems.map(p => (
                                 <tr key={p.id} onClick={() => setSelectedProduct(p.id)} style={{cursor:'pointer'}}>
                                     <td style={{display:'flex', gap:'16px', alignItems:'center', padding:'12px 16px'}}>
                                         <div className="product-thumb-wrap" style={{width:'50px', height:'50px'}}>
@@ -2197,17 +2281,17 @@ const ModuloProdutos = () => {
                     <table className="analy-table">
                         <thead>
                             <tr>
-                                <th>Produto</th>
-                                <th style={{textAlign:'center'}}>Saldo Global</th>
-                                <th style={{textAlign:'center'}}>Giro no Período</th>
-                                <th style={{textAlign:'center'}}>Dias de Estoque (DOH)</th>
+                                <SortTh col="id" label="Produto" align="left" />
+                                <SortTh col="saldo" label="Saldo Global" align="center" />
+                                <SortTh col="giro_30d" label="Giro no Período" align="center" />
+                                <SortTh col="doh" label="Dias de Estoque (DOH)" align="center" />
                                 <th style={{textAlign:'center'}}>Ação Rápida</th>
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? <tr><td colSpan="5" style={{padding:'40px', textAlign:'center', color:'var(--text-muted)'}}>Calculando saúde de estoque...</td></tr> : 
                             data.items.length === 0 ? <tr><td colSpan="5" style={{padding:'40px', textAlign:'center'}}>Nenhum produto em alerta de ruptura.</td></tr> :
-                            data.items.map(p => (
+                            sortedItems.map(p => (
                                 <tr key={p.id} style={{background: p.doh < 30 ? '#FFF5F5' : 'transparent'}}>
                                     <td style={{display:'flex', gap:'16px', alignItems:'center', padding:'12px 16px'}}>
                                         <div className="product-thumb-wrap" style={{width:'50px', height:'50px'}}>
